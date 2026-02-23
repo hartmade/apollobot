@@ -1,0 +1,162 @@
+"""
+Agent layer for ApolloBot — LLM providers and reasoning components.
+
+Provides:
+- LLMResponse: Response from an LLM call
+- LLMProvider: Abstract base class for LLM providers
+- AnthropicProvider: Claude implementation
+- OpenAIProvider: OpenAI implementation
+- create_llm: Factory function to instantiate providers
+"""
+
+from __future__ import annotations
+
+import json
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import Any
+
+
+@dataclass
+class LLMResponse:
+    """Response from an LLM API call."""
+
+    text: str
+    provider: str
+    model: str
+    input_tokens: int
+    output_tokens: int
+    cost_usd: float
+
+
+class LLMProvider(ABC):
+    """Abstract base class for LLM providers."""
+
+    @abstractmethod
+    async def complete(
+        self, messages: list[dict[str, str]], system: str = ""
+    ) -> LLMResponse:
+        """Generate a completion from the LLM."""
+        ...
+
+    async def complete_json(
+        self, messages: list[dict[str, str]], system: str = ""
+    ) -> dict[str, Any]:
+        """Generate a completion and parse as JSON."""
+        response = await self.complete(messages, system)
+        text = response.text.strip()
+        # Handle markdown code blocks
+        if text.startswith("```json"):
+            text = text[7:]
+        if text.startswith("```"):
+            text = text[3:]
+        if text.endswith("```"):
+            text = text[:-3]
+        return json.loads(text.strip())
+
+
+class AnthropicProvider(LLMProvider):
+    """Claude implementation of LLMProvider."""
+
+    # Cost per million tokens (approximate, Claude Sonnet 3.5)
+    INPUT_COST_PER_M = 3.0
+    OUTPUT_COST_PER_M = 15.0
+
+    def __init__(self, api_key: str, model: str = "claude-sonnet-4-20250514") -> None:
+        import anthropic
+
+        self.client = anthropic.AsyncAnthropic(api_key=api_key)
+        self.model = model
+
+    async def complete(
+        self, messages: list[dict[str, str]], system: str = ""
+    ) -> LLMResponse:
+        response = await self.client.messages.create(
+            model=self.model,
+            max_tokens=4096,
+            system=system or "You are a helpful research assistant.",
+            messages=messages,
+        )
+
+        text = response.content[0].text if response.content else ""
+        input_tokens = response.usage.input_tokens
+        output_tokens = response.usage.output_tokens
+
+        cost = (
+            (input_tokens / 1_000_000) * self.INPUT_COST_PER_M
+            + (output_tokens / 1_000_000) * self.OUTPUT_COST_PER_M
+        )
+
+        return LLMResponse(
+            text=text,
+            provider="anthropic",
+            model=self.model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=cost,
+        )
+
+
+class OpenAIProvider(LLMProvider):
+    """OpenAI implementation of LLMProvider."""
+
+    # Cost per million tokens (approximate, GPT-4o)
+    INPUT_COST_PER_M = 5.0
+    OUTPUT_COST_PER_M = 15.0
+
+    def __init__(self, api_key: str, model: str = "gpt-4o") -> None:
+        import openai
+
+        self.client = openai.AsyncOpenAI(api_key=api_key)
+        self.model = model
+
+    async def complete(
+        self, messages: list[dict[str, str]], system: str = ""
+    ) -> LLMResponse:
+        all_messages = []
+        if system:
+            all_messages.append({"role": "system", "content": system})
+        all_messages.extend(messages)
+
+        response = await self.client.chat.completions.create(
+            model=self.model,
+            max_tokens=4096,
+            messages=all_messages,
+        )
+
+        text = response.choices[0].message.content or ""
+        input_tokens = response.usage.prompt_tokens if response.usage else 0
+        output_tokens = response.usage.completion_tokens if response.usage else 0
+
+        cost = (
+            (input_tokens / 1_000_000) * self.INPUT_COST_PER_M
+            + (output_tokens / 1_000_000) * self.OUTPUT_COST_PER_M
+        )
+
+        return LLMResponse(
+            text=text,
+            provider="openai",
+            model=self.model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=cost,
+        )
+
+
+def create_llm(provider: str, api_key: str) -> LLMProvider:
+    """Factory function to create an LLM provider."""
+    if provider == "anthropic":
+        return AnthropicProvider(api_key)
+    elif provider == "openai":
+        return OpenAIProvider(api_key)
+    else:
+        raise ValueError(f"Unknown provider: {provider}")
+
+
+__all__ = [
+    "LLMResponse",
+    "LLMProvider",
+    "AnthropicProvider",
+    "OpenAIProvider",
+    "create_llm",
+]
