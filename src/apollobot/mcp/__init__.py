@@ -41,6 +41,7 @@ class MCPServerInfo:
     auth_token: str = ""
     capabilities: list[MCPCapability] = field(default_factory=list)
     healthy: bool = False
+    api_base: str = ""  # underlying public API for direct fallback
 
 
 class MCPClient:
@@ -205,14 +206,25 @@ class MCPClient:
     async def _request(
         self, server: MCPServerInfo, method: str, payload: dict[str, Any]
     ) -> dict[str, Any]:
-        """Send a request to an MCP server."""
-        resp = await self._http.post(
-            f"{server.url}/{method}",
-            json=payload,
-            headers=self._auth_headers(server),
-        )
-        resp.raise_for_status()
-        return resp.json()
+        """Send a request to an MCP server, falling back to direct API if proxy is down."""
+        try:
+            resp = await self._http.post(
+                f"{server.url}/{method}",
+                json=payload,
+                headers=self._auth_headers(server),
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.HTTPStatusError) as exc:
+            if server.api_base:
+                from apollobot.mcp.fallback import fallback_query
+                return await fallback_query(
+                    server_name=server.name,
+                    api_base=server.api_base,
+                    params=payload.get("parameters", {}),
+                    http_client=self._http,
+                )
+            raise
 
     async def close(self) -> None:
         await self._http.aclose()

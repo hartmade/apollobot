@@ -155,6 +155,32 @@ class TestSession:
         assert session.provenance_log[0]["event"] == "test_event"
         assert session.provenance_log[0]["key"] == "value"
 
+    def test_warnings_default_empty(self):
+        """Test that warnings list starts empty."""
+        mission = Mission.from_objective("Test")
+        session = Session(mission=mission)
+        assert session.warnings == []
+
+    def test_warnings_append(self):
+        """Test appending warnings."""
+        mission = Mission.from_objective("Test")
+        session = Session(mission=mission)
+        session.warnings.append("No papers found")
+        session.warnings.append("No datasets acquired")
+        assert len(session.warnings) == 2
+        assert "No papers found" in session.warnings
+
+    def test_warnings_roundtrip(self, temp_dir):
+        """Test warnings survive save/load cycle."""
+        mission = Mission(objective="Test", metadata={"output_dir": str(temp_dir)})
+        session = Session(mission=mission)
+        session.init_directories()
+        session.warnings.append("Test warning")
+        session.save_state()
+
+        loaded = Session.load_state(session.session_dir)
+        assert loaded.warnings == ["Test warning"]
+
     def test_session_state_roundtrip(self, temp_dir):
         """Test saving and loading session state."""
         mission = Mission(objective="Test", metadata={"output_dir": str(temp_dir)})

@@ -12,6 +12,7 @@ Provides:
 from __future__ import annotations
 
 import json
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
@@ -32,6 +33,11 @@ class LLMResponse:
 class LLMProvider(ABC):
     """Abstract base class for LLM providers."""
 
+    @staticmethod
+    def _clean_text(text: str) -> str:
+        """Strip <think>...</think> reasoning blocks from LLM output."""
+        return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
     @abstractmethod
     async def complete(
         self, messages: list[dict[str, str]], system: str = ""
@@ -39,12 +45,12 @@ class LLMProvider(ABC):
         """Generate a completion from the LLM."""
         ...
 
-    async def complete_json(
-        self, messages: list[dict[str, str]], system: str = ""
-    ) -> dict[str, Any]:
-        """Generate a completion and parse as JSON."""
-        response = await self.complete(messages, system)
-        text = response.text.strip()
+    @staticmethod
+    def _extract_json(raw: str) -> dict[str, Any]:
+        """Extract and parse JSON from LLM output, handling common issues."""
+        text = raw.strip()
+        # Strip <think>...</think> blocks (e.g. from reasoning models)
+        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
         # Handle markdown code blocks
         if text.startswith("```json"):
             text = text[7:]
@@ -52,7 +58,49 @@ class LLMProvider(ABC):
             text = text[3:]
         if text.endswith("```"):
             text = text[:-3]
-        return json.loads(text.strip())
+        text = text.strip()
+        # Fix trailing commas before } or ] (common LLM output issue)
+        text = re.sub(r",\s*([}\]])", r"\1", text)
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            # Fallback: find the outermost { ... } block via brace matching
+            start = text.find("{")
+            if start == -1:
+                raise
+            depth = 0
+            in_str = False
+            escape = False
+            for i in range(start, len(text)):
+                c = text[i]
+                if escape:
+                    escape = False
+                    continue
+                if c == "\\":
+                    escape = True
+                    continue
+                if c == '"' and not escape:
+                    in_str = not in_str
+                    continue
+                if in_str:
+                    continue
+                if c == "{":
+                    depth += 1
+                elif c == "}":
+                    depth -= 1
+                    if depth == 0:
+                        block = text[start : i + 1]
+                        # Fix trailing commas again on extracted block
+                        block = re.sub(r",\s*([}\]])", r"\1", block)
+                        return json.loads(block)
+            raise
+
+    async def complete_json(
+        self, messages: list[dict[str, str]], system: str = ""
+    ) -> dict[str, Any]:
+        """Generate a completion and parse as JSON."""
+        response = await self.complete(messages, system)
+        return self._extract_json(response.text)
 
 
 class AnthropicProvider(LLMProvider):
@@ -78,7 +126,8 @@ class AnthropicProvider(LLMProvider):
             messages=messages,
         )
 
-        text = response.content[0].text if response.content else ""
+        raw_text = response.content[0].text if response.content else ""
+        text = self._clean_text(raw_text)
         input_tokens = response.usage.input_tokens
         output_tokens = response.usage.output_tokens
 
@@ -104,11 +153,13 @@ class OpenAIProvider(LLMProvider):
     INPUT_COST_PER_M = 5.0
     OUTPUT_COST_PER_M = 15.0
 
-    def __init__(self, api_key: str, model: str = "gpt-4o") -> None:
+    def __init__(self, api_key: str, model: str = "") -> None:
+        import os
+
         import openai
 
         self.client = openai.AsyncOpenAI(api_key=api_key)
-        self.model = model
+        self.model = model or os.environ.get("OPENAI_MODEL", "gpt-4o")
 
     async def complete(
         self, messages: list[dict[str, str]], system: str = ""
@@ -124,7 +175,8 @@ class OpenAIProvider(LLMProvider):
             messages=all_messages,
         )
 
-        text = response.choices[0].message.content or ""
+        raw_text = response.choices[0].message.content or ""
+        text = self._clean_text(raw_text)
         input_tokens = response.usage.prompt_tokens if response.usage else 0
         output_tokens = response.usage.completion_tokens if response.usage else 0
 

@@ -13,8 +13,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from pathlib import Path
 from typing import Any, Callable, Optional
+
+logger = logging.getLogger(__name__)
 
 from apollobot.agents import LLMProvider, LLMResponse
 from apollobot.agents.planner import AnalysisStep, ResearchPlan
@@ -180,6 +183,10 @@ class ResearchExecutor:
                             "results_count": len(papers),
                         })
                     except Exception as e:
+                        logger.warning(
+                            "Literature search failed: server=%s query=%r error=%s",
+                            server.name, query, e,
+                        )
                         self.provenance.log_event("literature_search_error", {
                             "server": server.name,
                             "query": query,
@@ -195,10 +202,31 @@ class ResearchExecutor:
                 seen.add(key)
                 unique_papers.append(p)
 
+        # Warn if no papers found
+        if not unique_papers:
+            msg = (
+                "No papers retrieved from external databases. "
+                "Literature synthesis will rely solely on model knowledge."
+            )
+            logger.warning(msg)
+            session.warnings.append(msg)
+            self.provenance.log_event("empty_literature_results", {
+                "queries": plan.literature_queries,
+                "warning": msg,
+            })
+
         # Use LLM to synthesize literature
+        synthesis_preamble = ""
+        if not unique_papers:
+            synthesis_preamble = (
+                "WARNING: No papers were retrieved from external databases. "
+                "The synthesis below is based solely on model knowledge.\n\n"
+            )
+
         synthesis_resp = await self.llm.complete(
             messages=[{"role": "user", "content": (
-                f"Research objective: {session.mission.objective}\n\n"
+                synthesis_preamble
+                + f"Research objective: {session.mission.objective}\n\n"
                 f"I found {len(unique_papers)} relevant papers. Here are the key ones:\n\n"
                 + "\n".join(
                     f"- {p.get('title', 'Untitled')} ({p.get('year', 'n.d.')}): "
@@ -283,6 +311,18 @@ class ResearchExecutor:
                     if req.priority == "required" and req.fallback:
                         # Try fallback
                         self.provenance.log_event("trying_fallback", {"fallback": req.fallback})
+
+        if not acquired:
+            msg = (
+                f"No datasets acquired from {len(plan.data_requirements)} requirements. "
+                "Analysis will proceed with limited or no data."
+            )
+            logger.warning(msg)
+            session.warnings.append(msg)
+            self.provenance.log_event("empty_data_acquisition", {
+                "requirements_count": len(plan.data_requirements),
+                "warning": msg,
+            })
 
         return (
             f"Acquired {len(acquired)} datasets from {len(plan.data_requirements)} requirements",
@@ -604,6 +644,8 @@ class ResearchExecutor:
 
     def _extract_code(self, text: str) -> str:
         """Extract Python code from LLM response."""
+        import re
+        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
         if "```python" in text:
             return text.split("```python")[1].split("```")[0].strip()
         if "```" in text:
@@ -698,6 +740,8 @@ class ResearchExecutor:
     @staticmethod
     def _extract_json(text: str) -> str:
         """Extract JSON from LLM response."""
+        import re
+        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
         if "```json" in text:
             return text.split("```json")[1].split("```")[0].strip()
         if "```" in text:

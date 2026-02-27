@@ -112,6 +112,7 @@ class Session(BaseModel):
     datasets: list[dict[str, Any]] = Field(default_factory=list)
     hypotheses_status: dict[str, str] = Field(default_factory=dict)  # hypothesis → supported|rejected|inconclusive
     key_findings: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
 
     # Translation potential scores (set during Discover self-review)
     translation_scores: dict[str, float] = Field(default_factory=dict)

@@ -604,6 +604,7 @@ class Orchestrator:
                 url=srv.url,
                 description=srv.description,
                 domain=srv.domain if srv.domain != "shared" else domain,
+                api_base=srv.api_base,
             ))
 
         # Also register any custom servers from config

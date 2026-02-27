@@ -10,11 +10,29 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from apollobot.agents import LLMProvider, LLMResponse
 from apollobot.core.mission import Mission, ResearchMode
 from apollobot.core.provenance import ProvenanceEngine
+
+
+def _coerce_list(v: Any) -> list[str]:
+    """Coerce a value to list[str] (handles LLM returning comma-separated strings)."""
+    if isinstance(v, list):
+        return [str(x) for x in v]
+    if isinstance(v, str):
+        return [s.strip() for s in v.split(",") if s.strip()]
+    return [str(v)]
+
+
+def _coerce_dict(v: Any) -> dict[str, Any]:
+    """Coerce a value to dict (handles LLM returning strings instead of dicts)."""
+    if isinstance(v, dict):
+        return v
+    if isinstance(v, str):
+        return {"query": v}
+    return {"value": v}
 
 
 class DataRequirement(BaseModel):
@@ -27,6 +45,16 @@ class DataRequirement(BaseModel):
     priority: str = "required"  # required | nice_to_have
     fallback: str = ""
 
+    @field_validator("query_params", mode="before")
+    @classmethod
+    def coerce_query_params(cls, v: Any) -> dict[str, Any]:
+        return _coerce_dict(v)
+
+    @field_validator("priority", mode="before")
+    @classmethod
+    def coerce_priority(cls, v: Any) -> str:
+        return str(v)
+
 
 class AnalysisStep(BaseModel):
     """A single analysis operation in the plan."""
@@ -38,6 +66,21 @@ class AnalysisStep(BaseModel):
     parameters: dict[str, Any] = Field(default_factory=dict)
     expected_output: str = ""
     statistical_tests: list[str] = Field(default_factory=list)
+
+    @field_validator("inputs", mode="before")
+    @classmethod
+    def coerce_inputs(cls, v: Any) -> list[str]:
+        return _coerce_list(v)
+
+    @field_validator("parameters", mode="before")
+    @classmethod
+    def coerce_parameters(cls, v: Any) -> dict[str, Any]:
+        return _coerce_dict(v)
+
+    @field_validator("statistical_tests", mode="before")
+    @classmethod
+    def coerce_statistical_tests(cls, v: Any) -> list[str]:
+        return _coerce_list(v)
 
 
 class ResearchPlan(BaseModel):
@@ -58,6 +101,29 @@ class ResearchPlan(BaseModel):
     risks: list[str] = Field(default_factory=list)
     estimated_compute_cost: float = 0.0
     estimated_time_hours: float = 0.0
+
+    @field_validator("risks", "expected_outputs", "literature_queries", mode="before")
+    @classmethod
+    def coerce_str_list(cls, v: Any) -> list[str]:
+        if not isinstance(v, list):
+            return _coerce_list(v)
+        result = []
+        for item in v:
+            if isinstance(item, dict):
+                # Flatten dict values into a single description string
+                parts = [str(val) for val in item.values()]
+                result.append(" — ".join(parts))
+            else:
+                result.append(str(item))
+        return result
+
+    @field_validator("estimated_compute_cost", "estimated_time_hours", mode="before")
+    @classmethod
+    def coerce_float(cls, v: Any) -> float:
+        try:
+            return float(v)
+        except (ValueError, TypeError):
+            return 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +225,7 @@ class ResearchPlanner:
             system=system,
         )
 
+        resp.pop("mission_id", None)
         plan = ResearchPlan(mission_id=mission.id, **resp)
 
         self.provenance.log_decision(
@@ -259,6 +326,7 @@ class ResearchPlanner:
             )}],
             system=PLANNER_SYSTEM,
         )
+        resp.pop("mission_id", None)
         return ResearchPlan(mission_id=mission.id, **resp)
 
 
