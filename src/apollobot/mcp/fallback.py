@@ -8,13 +8,57 @@ and PubMed.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 import xml.etree.ElementTree as ET
 from typing import Any, Callable, Awaitable
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+# Per-server rate limiting — prevents 429s by throttling proactively
+_MIN_INTERVALS: dict[str, float] = {
+    "semantic-scholar": 1.5,  # S2 public API: ~1 req/sec
+}
+_last_request_time: dict[str, float] = {}
+_throttle_lock = asyncio.Lock()
+
+
+async def _throttle(server_name: str) -> None:
+    """Wait if needed to respect per-server rate limits."""
+    min_interval = _MIN_INTERVALS.get(server_name)
+    if min_interval is None:
+        return
+    async with _throttle_lock:
+        last = _last_request_time.get(server_name, 0.0)
+        elapsed = time.monotonic() - last
+        if elapsed < min_interval:
+            wait = min_interval - elapsed
+            logger.debug("Throttling %s for %.2fs", server_name, wait)
+            await asyncio.sleep(wait)
+        _last_request_time[server_name] = time.monotonic()
+
+
+async def _get_with_retry(
+    http: httpx.AsyncClient,
+    url: str,
+    *,
+    params: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
+    max_retries: int = 3,
+    base_delay: float = 1.0,
+) -> httpx.Response:
+    """HTTP GET with exponential backoff retry on 429 rate-limit responses."""
+    for attempt in range(max_retries + 1):
+        resp = await http.get(url, params=params, headers=headers)
+        if resp.status_code != 429 or attempt == max_retries:
+            return resp
+        delay = base_delay * (2 ** attempt)
+        logger.info("Rate limited (429), retrying in %.1fs (attempt %d/%d)", delay, attempt + 1, max_retries)
+        await asyncio.sleep(delay)
+    return resp  # unreachable but satisfies type checker
 
 # Type for fallback handler functions
 FallbackHandler = Callable[
@@ -95,13 +139,16 @@ async def _semantic_scholar_search(
     query = params.get("query", "")
     limit = min(params.get("limit", 20), 100)
 
-    resp = await http.get(
+    resp = await _get_with_retry(
+        http,
         f"{api_base}/paper/search",
         params={
             "query": query,
             "limit": limit,
             "fields": "title,year,abstract,externalIds",
         },
+        max_retries=5,
+        base_delay=2.0,
     )
     resp.raise_for_status()
     data = resp.json()
@@ -223,6 +270,131 @@ async def _pubmed_search(
 
 
 # ---------------------------------------------------------------------------
+# HuggingFace adapter
+# ---------------------------------------------------------------------------
+
+async def _huggingface_search(
+    api_base: str,
+    params: dict[str, Any],
+    http: httpx.AsyncClient,
+) -> dict[str, Any]:
+    """Search HuggingFace models/datasets and normalize as papers."""
+    query = params.get("query", "")
+    limit = min(params.get("limit", 20), 100)
+
+    # Search models endpoint
+    resp = await http.get(
+        f"{api_base}/models",
+        params={"search": query, "limit": limit, "sort": "downloads", "direction": "-1"},
+    )
+    resp.raise_for_status()
+    items = resp.json()
+
+    papers = []
+    for item in items[:limit]:
+        model_id = item.get("modelId", item.get("id", ""))
+        papers.append({
+            "title": model_id,
+            "abstract": item.get("pipeline_tag", ""),
+            "year": 0,
+            "doi": "",
+            "source": "huggingface",
+            "url": f"https://huggingface.co/{model_id}",
+        })
+
+    logger.info("HuggingFace fallback: %d results for query=%r", len(papers), query)
+    return {"papers": papers}
+
+
+# ---------------------------------------------------------------------------
+# Papers With Code adapter
+# ---------------------------------------------------------------------------
+
+async def _papers_with_code_search(
+    api_base: str,
+    params: dict[str, Any],
+    http: httpx.AsyncClient,
+) -> dict[str, Any]:
+    """Search papers via HuggingFace daily papers API (PWC API now redirects there)."""
+    query = params.get("query", "")
+    limit = min(params.get("limit", 20), 50)
+
+    resp = await http.get(
+        "https://huggingface.co/api/daily_papers",
+        params={"search": query},
+    )
+    if resp.status_code != 200:
+        logger.info("Papers With Code fallback: no results (status %d)", resp.status_code)
+        return {"papers": []}
+
+    items = resp.json()
+
+    papers = []
+    for item in items[:limit]:
+        paper = item.get("paper", {})
+        arxiv_id = paper.get("id", "")
+        title = item.get("title", "")
+        abstract = item.get("summary", "")
+
+        papers.append({
+            "title": title,
+            "abstract": abstract,
+            "year": 0,
+            "doi": "",
+            "arxiv_id": arxiv_id,
+            "source": "papers_with_code",
+            "url": f"https://arxiv.org/abs/{arxiv_id}" if arxiv_id else "",
+        })
+
+    logger.info("Papers With Code fallback: %d papers for query=%r", len(papers), query)
+    return {"papers": papers}
+
+
+# ---------------------------------------------------------------------------
+# OpenML adapter
+# ---------------------------------------------------------------------------
+
+async def _openml_search(
+    api_base: str,
+    params: dict[str, Any],
+    http: httpx.AsyncClient,
+) -> dict[str, Any]:
+    """Search OpenML datasets and normalize results."""
+    query = params.get("query", "")
+    limit = min(params.get("limit", 20), 100)
+
+    resp = await http.get(
+        f"{api_base}/json/data/list",
+        params={"limit": limit},
+        headers={"Accept": "application/json"},
+    )
+    # OpenML may return non-200 for empty results
+    if resp.status_code != 200:
+        logger.info("OpenML fallback: no results (status %d)", resp.status_code)
+        return {"papers": []}
+
+    data = resp.json()
+    datasets = data.get("data", {}).get("dataset", [])
+
+    papers = []
+    for ds in datasets[:limit]:
+        name = ds.get("name", "")
+        if query.lower() not in name.lower():
+            continue
+        papers.append({
+            "title": name,
+            "abstract": ds.get("format", ""),
+            "year": 0,
+            "doi": "",
+            "source": "openml",
+            "url": f"https://www.openml.org/d/{ds.get('did', '')}",
+        })
+
+    logger.info("OpenML fallback: %d results for query=%r", len(papers), query)
+    return {"papers": papers}
+
+
+# ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
 
@@ -230,6 +402,9 @@ _FALLBACK_HANDLERS: dict[str, FallbackHandler] = {
     "arxiv": _arxiv_search,
     "semantic-scholar": _semantic_scholar_search,
     "pubmed": _pubmed_search,
+    "huggingface": _huggingface_search,
+    "papers-with-code": _papers_with_code_search,
+    "openml": _openml_search,
 }
 
 
@@ -251,4 +426,5 @@ async def fallback_query(
             f"Available: {list(_FALLBACK_HANDLERS.keys())}"
         )
     logger.info("Falling back to direct API for server=%s", server_name)
+    await _throttle(server_name)
     return await handler(api_base, params, http_client)

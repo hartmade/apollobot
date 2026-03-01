@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import traceback
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -119,10 +120,13 @@ class ResearchExecutor:
                 # Notify phase completion with summary
                 await self.checkpoint.notify(phase.value, summary)
             except Exception as e:
+                tb = traceback.format_exc()
+                logger.error("Phase %s failed:\n%s", phase.value, tb)
                 session.fail_phase(phase, str(e))
                 self.provenance.log_event("phase_error", {
                     "phase": phase.value,
                     "error": str(e),
+                    "traceback": tb,
                 })
                 await self.checkpoint.notify(
                     phase.value, f"Phase failed: {e}"
@@ -173,7 +177,7 @@ class ResearchExecutor:
                         results = await self.mcp.query(
                             server.name,
                             "search",
-                            {"query": query, "limit": 50},
+                            {"query": query, "limit": 20},
                         )
                         papers = results.get("papers", results.get("results", []))
                         all_papers.extend(papers)
@@ -193,10 +197,12 @@ class ResearchExecutor:
                             "error": str(e),
                         })
 
-        # Deduplicate by title/DOI
+        # Deduplicate by title/DOI (filter out None/non-dict entries)
         seen = set()
         unique_papers = []
         for p in all_papers:
+            if not isinstance(p, dict):
+                continue
             key = p.get("doi") or p.get("title", "")
             if key and key not in seen:
                 seen.add(key)
@@ -229,8 +235,8 @@ class ResearchExecutor:
                 + f"Research objective: {session.mission.objective}\n\n"
                 f"I found {len(unique_papers)} relevant papers. Here are the key ones:\n\n"
                 + "\n".join(
-                    f"- {p.get('title', 'Untitled')} ({p.get('year', 'n.d.')}): "
-                    f"{p.get('abstract', 'No abstract')[:300]}"
+                    f"- {p.get('title') or 'Untitled'} ({p.get('year') or 'n.d.'}): "
+                    f"{(p.get('abstract') or 'No abstract')[:300]}"
                     for p in unique_papers[:30]
                 )
                 + "\n\nSynthesize these findings into:\n"

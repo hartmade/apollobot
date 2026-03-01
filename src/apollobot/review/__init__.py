@@ -161,3 +161,13 @@ class ReviewEngine:
         )
 
         return ReviewReport(**resp)
+
+
+# Re-export new review components
+from apollobot.review.submission import (  # noqa: E402, F401
+    SubmissionReviewer,
+    SubmissionReviewReport,
+    ProvenanceBadge,
+)
+from apollobot.review.notify import ReviewNotifier  # noqa: E402, F401
+from apollobot.review.pipeline import SubmissionPipeline  # noqa: E402, F401

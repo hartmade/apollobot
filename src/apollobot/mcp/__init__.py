@@ -54,7 +54,7 @@ class MCPClient:
 
     def __init__(self, timeout: float = 30.0) -> None:
         self._servers: dict[str, MCPServerInfo] = {}
-        self._http = httpx.AsyncClient(timeout=timeout)
+        self._http = httpx.AsyncClient(timeout=timeout, follow_redirects=True)
 
     # ------------------------------------------------------------------
     # Server registration
@@ -215,15 +215,21 @@ class MCPClient:
             )
             resp.raise_for_status()
             return resp.json()
-        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.HTTPStatusError) as exc:
+        except Exception as exc:
+            # Fallback to direct API for any connection failure (SSL, DNS,
+            # timeout, HTTP errors, etc.) when an api_base is configured.
             if server.api_base:
                 from apollobot.mcp.fallback import fallback_query
-                return await fallback_query(
-                    server_name=server.name,
-                    api_base=server.api_base,
-                    params=payload.get("parameters", {}),
-                    http_client=self._http,
-                )
+                try:
+                    return await fallback_query(
+                        server_name=server.name,
+                        api_base=server.api_base,
+                        params=payload.get("parameters", {}),
+                        http_client=self._http,
+                    )
+                except ValueError:
+                    # No fallback handler for this server — re-raise original
+                    raise exc
             raise
 
     async def close(self) -> None:

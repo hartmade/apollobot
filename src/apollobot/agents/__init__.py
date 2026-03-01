@@ -46,28 +46,39 @@ class LLMProvider(ABC):
         ...
 
     @staticmethod
+    def _fix_json(text: str) -> str:
+        """Apply common JSON fixes for non-standard LLM output."""
+        # Strip /* block comments */
+        text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+        # Strip // line comments only at start of lines (safe — won't hit URLs)
+        text = re.sub(r"^\s*//[^\n]*\n?", "", text, flags=re.MULTILINE)
+        # Strip // comments after JSON structural tokens (not inside strings)
+        text = re.sub(r'(?<=[,\]\}\d])\s*//[^\n]*', "", text)
+        # Fix trailing commas before } or ] (common LLM output issue)
+        text = re.sub(r",\s*([}\]])", r"\1", text)
+        return text
+
+    @staticmethod
     def _extract_json(raw: str) -> dict[str, Any]:
         """Extract and parse JSON from LLM output, handling common issues."""
         text = raw.strip()
         # Strip <think>...</think> blocks (e.g. from reasoning models)
         text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
-        # Handle markdown code blocks
-        if text.startswith("```json"):
-            text = text[7:]
-        if text.startswith("```"):
-            text = text[3:]
-        if text.endswith("```"):
-            text = text[:-3]
+        # Handle markdown code blocks (possibly with language tag)
+        text = re.sub(r"^```\w*\n?", "", text)
+        text = re.sub(r"\n?```$", "", text)
         text = text.strip()
-        # Fix trailing commas before } or ] (common LLM output issue)
-        text = re.sub(r",\s*([}\]])", r"\1", text)
+
+        # Try parsing after basic fixes
+        fixed = LLMProvider._fix_json(text)
         try:
-            return json.loads(text)
+            return json.loads(fixed)
         except json.JSONDecodeError:
-            # Fallback: find the outermost { ... } block via brace matching
-            start = text.find("{")
-            if start == -1:
-                raise
+            pass
+
+        # Fallback: find the outermost { ... } block via brace matching
+        start = text.find("{")
+        if start != -1:
             depth = 0
             in_str = False
             escape = False
@@ -90,17 +101,67 @@ class LLMProvider(ABC):
                     depth -= 1
                     if depth == 0:
                         block = text[start : i + 1]
-                        # Fix trailing commas again on extracted block
-                        block = re.sub(r",\s*([}\]])", r"\1", block)
-                        return json.loads(block)
-            raise
+                        block = LLMProvider._fix_json(block)
+                        try:
+                            return json.loads(block)
+                        except json.JSONDecodeError:
+                            break
+
+            # Try aggressive cleanup on the extracted region
+            region = text[start:]
+            # Find last } in the region
+            last_brace = region.rfind("}")
+            if last_brace != -1:
+                block = region[: last_brace + 1]
+                block = LLMProvider._fix_json(block)
+                try:
+                    return json.loads(block)
+                except json.JSONDecodeError:
+                    pass
+
+            # Last resort: replace single quotes with double quotes
+            try:
+                fixed = re.sub(r"'([^']*)'(?=\s*:)", r'"\1"', region)
+                fixed = LLMProvider._fix_json(fixed)
+                return json.loads(fixed)
+            except (json.JSONDecodeError, IndexError):
+                pass
+
+        raise json.JSONDecodeError(
+            f"Could not parse JSON from LLM output (length={len(raw)})",
+            raw[:200],
+            0,
+        )
 
     async def complete_json(
-        self, messages: list[dict[str, str]], system: str = ""
+        self, messages: list[dict[str, str]], system: str = "", retries: int = 2
     ) -> dict[str, Any]:
-        """Generate a completion and parse as JSON."""
-        response = await self.complete(messages, system)
-        return self._extract_json(response.text)
+        """Generate a completion and parse as JSON, with retry on parse failure."""
+        last_error = None
+        for attempt in range(1 + retries):
+            if attempt == 0:
+                response = await self.complete(messages, system)
+            else:
+                # Retry with error feedback appended
+                retry_messages = messages + [
+                    {"role": "assistant", "content": response.text},
+                    {"role": "user", "content": (
+                        f"Your response could not be parsed as JSON: {last_error}\n"
+                        "Please return ONLY valid JSON with no comments, no trailing "
+                        "commas, and double-quoted keys. No markdown fences."
+                    )},
+                ]
+                response = await self.complete(retry_messages, system)
+            try:
+                return self._extract_json(response.text)
+            except json.JSONDecodeError as e:
+                last_error = str(e)
+                continue
+        raise json.JSONDecodeError(
+            f"Failed to parse JSON after {1 + retries} attempts: {last_error}",
+            response.text[:200],
+            0,
+        )
 
 
 class AnthropicProvider(LLMProvider):
@@ -171,10 +232,12 @@ class OpenAIProvider(LLMProvider):
 
         response = await self.client.chat.completions.create(
             model=self.model,
-            max_tokens=4096,
+            max_tokens=8192,
             messages=all_messages,
         )
 
+        if not response.choices:
+            raise RuntimeError(f"LLM returned no choices (model={self.model})")
         raw_text = response.choices[0].message.content or ""
         text = self._clean_text(raw_text)
         input_tokens = response.usage.prompt_tokens if response.usage else 0

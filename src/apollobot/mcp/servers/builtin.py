@@ -48,7 +48,7 @@ LITERATURE_SERVERS = [
         description="Search and retrieve preprints from arXiv",
         domain="shared",
         category="literature",
-        api_base="http://export.arxiv.org/api",
+        api_base="https://export.arxiv.org/api",
     ),
     BuiltinServer(
         name="semantic-scholar",

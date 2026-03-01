@@ -65,6 +65,15 @@ class ComputeConfig(BaseModel):
     max_budget_usd: float = 50.0
 
 
+class JournalConfig(BaseModel):
+    """Configuration for posting reviews to the Frontier Science Journal API."""
+
+    enabled: bool = False
+    base_url: str = "https://frontierscience.ai"
+    hmac_secret: str = ""
+    timeout: float = 30.0
+
+
 class ApolloConfig(BaseModel):
     """Main configuration for ApolloBot."""
 
@@ -76,6 +85,7 @@ class ApolloConfig(BaseModel):
     output_dir: str = str(APOLLO_SESSIONS_DIR)
     custom_servers: list[dict[str, Any]] = Field(default_factory=list)
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
+    journal: JournalConfig = Field(default_factory=JournalConfig)
 
 
 # ---------------------------------------------------------------------------
@@ -123,5 +133,6 @@ __all__ = [
     "load_config",
     "save_config",
     "load_custom_servers",
+    "JournalConfig",
     "NotificationsConfig",
 ]

@@ -377,23 +377,286 @@ def list_sessions():
 
 
 # ---------------------------------------------------------------------------
+# Review
+# ---------------------------------------------------------------------------
+
+
+@main.command()
+@click.option("--session", "session_id", default="", help="Review an ApolloBot session")
+@click.option("--manuscript", type=click.Path(exists=True), default=None, help="Review a manuscript file")
+@click.option("--output", "-o", type=click.Path(), default="", help="Save report to file")
+@click.option("--paper-id", default="", help="Journal paper ID for posting review")
+@click.option("--post-to-journal", is_flag=True, help="Post review to Frontier Science Journal API")
+def review(session_id, manuscript, output, paper_id, post_to_journal):
+    """Run AI review on a session or manuscript."""
+    from apollobot.core import APOLLO_SESSIONS_DIR, load_config
+    from apollobot.agents import create_llm
+    from apollobot.review.journal_client import JournalClient
+    from apollobot.review.submission import SubmissionReviewer
+
+    if not session_id and not manuscript:
+        console.print("[red]Error: Provide --session <id> or --manuscript <file>[/red]")
+        sys.exit(1)
+
+    config = load_config()
+    if not config.api.get_key():
+        console.print("[red]Error: No API key. Run 'apollo init' first.[/red]")
+        sys.exit(1)
+
+    llm = create_llm(config.api.default_provider, config.api.get_key())
+    reviewer = SubmissionReviewer(llm)
+    sessions_dir = Path(config.output_dir) if config.output_dir else Path(APOLLO_SESSIONS_DIR)
+
+    # Build journal client if requested
+    journal_client = None
+    if post_to_journal and paper_id:
+        if not config.journal.enabled:
+            console.print("[yellow]Warning: journal integration not enabled in config. Posting anyway.[/yellow]")
+        if not config.journal.hmac_secret:
+            console.print("[red]Error: journal.hmac_secret not set in config.[/red]")
+            sys.exit(1)
+        journal_client = JournalClient(
+            base_url=config.journal.base_url,
+            hmac_secret=config.journal.hmac_secret,
+            timeout=config.journal.timeout,
+        )
+    elif post_to_journal and not paper_id:
+        console.print("[red]Error: --post-to-journal requires --paper-id[/red]")
+        sys.exit(1)
+
+    async def _review():
+        manuscript_text = ""
+        provenance_path = None
+
+        if session_id:
+            session_dir = sessions_dir / session_id
+            if not session_dir.exists():
+                console.print(f"[red]Session {session_id} not found.[/red]")
+                sys.exit(1)
+            for name in ("manuscript.md", "manuscript.tex"):
+                candidate = session_dir / name
+                if candidate.exists():
+                    manuscript_text = candidate.read_text()
+                    break
+            prov_dir = session_dir / "provenance"
+            if prov_dir.exists():
+                provenance_path = prov_dir
+            if not manuscript_text:
+                console.print(f"[red]No manuscript found in {session_id}[/red]")
+                sys.exit(1)
+        else:
+            manuscript_text = Path(manuscript).read_text()
+
+        console.print("[bold]Running AI review...[/bold]\n")
+        report = await reviewer.review(
+            manuscript_text,
+            provenance_path=provenance_path,
+            session_id=session_id,
+        )
+
+        report_md = reviewer.format_report(report)
+        console.print(report_md)
+
+        # Post to journal if configured
+        if journal_client and paper_id:
+            try:
+                review_data = {
+                    "recommendation": report.recommendation,
+                    "confidence": report.confidence,
+                    "scores": [s.model_dump() for s in report.scores],
+                    "key_issues": report.key_issues,
+                    "strengths": report.strengths,
+                    "summary": report.summary,
+                    "provenance_badge": report.provenance_badge,
+                }
+                result = await journal_client.post_ai_review(paper_id, review_data)
+                console.print(f"\n[green]>[/green] AI review posted to journal (review_id: {result.get('review_id', '?')})")
+
+                await journal_client.post_notification(
+                    paper_id,
+                    event="ai_review_complete",
+                    recipients=["submitter", "editors"],
+                    data={"recommendation": report.recommendation},
+                )
+                console.print("[green]>[/green] Notification sent to journal")
+            except Exception as exc:
+                console.print(f"[red]Failed to post to journal: {exc}[/red]")
+
+        # Save report
+        save_path = output
+        if not save_path and session_id:
+            session_dir = sessions_dir / session_id
+            save_path = str(session_dir / "review" / "submission_review.md")
+        if save_path:
+            save_file = Path(save_path)
+            save_file.parent.mkdir(parents=True, exist_ok=True)
+            save_file.write_text(report_md)
+            console.print(f"\n[green]>[/green] Report saved to {save_path}")
+
+    asyncio.run(_review())
+
+
+# ---------------------------------------------------------------------------
 # Submit
 # ---------------------------------------------------------------------------
 
 
 @main.command()
 @click.option("--session", required=True, help="Session ID")
-@click.option("--journal", default="frontier")
-def submit(session, journal):
+@click.option("--title", default="", help="Paper title (defaults to session title)")
+@click.option("--abstract", "abstract_text", default="", help="Paper abstract (defaults to session objective)")
+@click.option("--track", default="", help="Journal track (defaults to session domain)")
+@click.option("--auto-review", is_flag=True, help="Run AI review after submission")
+def submit(session, title, abstract_text, track, auto_review):
     """Submit a completed session to Frontier Science Journal."""
-    from apollobot.core import APOLLO_SESSIONS_DIR
-    session_dir = Path(APOLLO_SESSIONS_DIR) / session
+    from apollobot.core import APOLLO_SESSIONS_DIR, load_config
+    from apollobot.core.session import Session
+    from apollobot.review.journal_client import JournalClient
+
+    config = load_config()
+
+    # Validate session exists
+    sessions_dir = Path(config.output_dir) if config.output_dir else Path(APOLLO_SESSIONS_DIR)
+    session_dir = sessions_dir / session
     if not session_dir.exists():
         console.print(f"[red]Session {session} not found.[/red]")
         sys.exit(1)
-    console.print(f"[bold]Packaging {session} for {journal}...[/bold]")
-    console.print(f"[yellow]Submission API coming in v0.2.0[/yellow]")
-    console.print(f"[dim]Submit manually at https://frontierscience.ai/journal/submit[/dim]")
+
+    # Validate journal config
+    if not config.journal.hmac_secret:
+        console.print("[red]Error: journal.hmac_secret not set in config.[/red]")
+        console.print("[dim]Run 'apollo init' or edit ~/.apollobot/config.yaml[/dim]")
+        sys.exit(1)
+
+    # Load session metadata
+    try:
+        sess = Session.load_state(session_dir)
+    except Exception:
+        console.print(f"[red]Could not load session state for {session}.[/red]")
+        sys.exit(1)
+
+    # Derive defaults from session
+    paper_title = title or sess.mission.title or f"Research: {sess.mission.objective[:80]}"
+    paper_abstract = abstract_text or sess.mission.objective
+    paper_track = track or sess.mission.domain
+
+    # Find manuscript
+    manuscript_path = ""
+    for name in ("manuscript.md", "manuscript.tex"):
+        candidate = session_dir / name
+        if candidate.exists():
+            manuscript_path = str(candidate)
+            break
+
+    journal_client = JournalClient(
+        base_url=config.journal.base_url,
+        hmac_secret=config.journal.hmac_secret,
+        timeout=config.journal.timeout,
+    )
+
+    # Build author list from config identity
+    authors = []
+    if config.identity.name:
+        authors.append({"name": config.identity.name, "orcid": config.identity.orcid})
+
+    async def _submit():
+        console.print(f"[bold]Submitting \"{paper_title}\" to Frontier Science...[/bold]\n")
+        console.print(f"  Track: {paper_track}")
+        console.print(f"  Session: {session}")
+        if manuscript_path:
+            console.print(f"  Manuscript: {Path(manuscript_path).name}")
+        console.print()
+
+        # Submit paper
+        result = await journal_client.submit_paper(
+            title=paper_title,
+            abstract=paper_abstract,
+            track=paper_track,
+            session_id=session,
+            submitter_email=config.identity.email,
+            authors=authors or None,
+        )
+
+        paper = result.get("paper", {})
+        paper_id = paper.get("id", "")
+
+        if not paper_id:
+            console.print(f"[red]Submission failed: {result.get('error', 'Unknown error')}[/red]")
+            sys.exit(1)
+
+        console.print(f"[green]>[/green] Paper submitted (ID: {paper_id})")
+
+        # Upload manuscript if available
+        if manuscript_path and paper_id:
+            try:
+                await journal_client.upload_manuscript(paper_id, manuscript_path)
+                console.print(f"[green]>[/green] Manuscript uploaded")
+            except Exception as exc:
+                console.print(f"[yellow]Warning: Manuscript upload failed: {exc}[/yellow]")
+                console.print("[dim]Paper was still submitted. Upload manually via the web form.[/dim]")
+
+        # Notify
+        try:
+            await journal_client.post_notification(
+                paper_id,
+                event="submission_received",
+                recipients=["submitter", "editors"],
+            )
+            console.print(f"[green]>[/green] Notification sent")
+        except Exception:
+            pass  # Non-critical
+
+        console.print(f"\n[bold]Track status:[/bold] {config.journal.base_url}/papers/status/{paper_id}")
+
+        # Auto-review if requested
+        if auto_review:
+            console.print("\n[bold]Running AI review...[/bold]\n")
+            from apollobot.agents import create_llm
+            from apollobot.review.submission import SubmissionReviewer
+
+            if not config.api.get_key():
+                console.print("[red]Error: No API key for review. Run 'apollo init'.[/red]")
+                return
+
+            llm = create_llm(config.api.default_provider, config.api.get_key())
+            reviewer = SubmissionReviewer(llm)
+
+            manuscript_text = ""
+            provenance_path = None
+            if manuscript_path:
+                manuscript_text = Path(manuscript_path).read_text()
+            prov_dir = session_dir / "provenance"
+            if prov_dir.exists():
+                provenance_path = prov_dir
+
+            if manuscript_text:
+                report = await reviewer.review(
+                    manuscript_text,
+                    provenance_path=provenance_path,
+                    session_id=session,
+                )
+                report_md = reviewer.format_report(report)
+                console.print(report_md)
+
+                # Post review to journal
+                try:
+                    review_data = {
+                        "recommendation": report.recommendation,
+                        "confidence": report.confidence,
+                        "scores": [s.model_dump() for s in report.scores],
+                        "key_issues": report.key_issues,
+                        "strengths": report.strengths,
+                        "summary": report.summary,
+                        "provenance_badge": report.provenance_badge,
+                    }
+                    rv = await journal_client.post_ai_review(paper_id, review_data)
+                    console.print(f"\n[green]>[/green] AI review posted (review_id: {rv.get('review_id', '?')})")
+                except Exception as exc:
+                    console.print(f"[red]Failed to post review: {exc}[/red]")
+            else:
+                console.print("[yellow]No manuscript found — skipping AI review.[/yellow]")
+
+    asyncio.run(_submit())
 
 
 # ---------------------------------------------------------------------------
