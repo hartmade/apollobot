@@ -35,6 +35,7 @@ class Phase(str, Enum):
     STATISTICAL_TESTING = "statistical_testing"
     MANUSCRIPT_DRAFTING = "manuscript_drafting"
     SELF_REVIEW = "self_review"
+    MANUSCRIPT_REVISION = "manuscript_revision"
 
     # Translate mode phases
     TRANSLATE_ASSESS = "translate_assess"

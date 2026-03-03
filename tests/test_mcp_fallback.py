@@ -4,11 +4,11 @@ import pytest
 import httpx
 from unittest.mock import AsyncMock, patch
 
-from apollobot.mcp.fallback import (
+from apollobot.mcp.fallback import fallback_query
+from apollobot.mcp.fallback._literature import (
     _arxiv_search,
     _pubmed_search,
     _semantic_scholar_search,
-    fallback_query,
 )
 
 # ---------------------------------------------------------------------------

@@ -48,6 +48,7 @@ class APIConfig(BaseModel):
     default_provider: str = "anthropic"
     anthropic_api_key: str = ""
     openai_api_key: str = ""
+    minimax_api_key: str = ""
 
     def get_key(self) -> str:
         """Get the API key for the default provider."""
@@ -55,6 +56,8 @@ class APIConfig(BaseModel):
             return self.anthropic_api_key
         elif self.default_provider == "openai":
             return self.openai_api_key
+        elif self.default_provider == "minimax":
+            return self.minimax_api_key
         return ""
 
 

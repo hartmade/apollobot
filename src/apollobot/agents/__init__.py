@@ -64,9 +64,19 @@ class LLMProvider(ABC):
         text = raw.strip()
         # Strip <think>...</think> blocks (e.g. from reasoning models)
         text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+        # Strip <output>...</output> and similar XML wrapper tags
+        text = re.sub(r"<(?:output|response|result|json|answer)>", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"</(?:output|response|result|json|answer)>", "", text, flags=re.IGNORECASE)
         # Handle markdown code blocks (possibly with language tag)
         text = re.sub(r"^```\w*\n?", "", text)
-        text = re.sub(r"\n?```$", "", text)
+        text = re.sub(r"\n?```\s*$", "", text)
+        # Strip any leading prose before the first {
+        first_brace = text.find("{")
+        if first_brace > 0 and first_brace < 500:
+            # Check if everything before { is non-JSON prose
+            prefix = text[:first_brace].strip()
+            if prefix and not prefix.startswith("["):
+                text = text[first_brace:]
         text = text.strip()
 
         # Try parsing after basic fixes
@@ -214,12 +224,15 @@ class OpenAIProvider(LLMProvider):
     INPUT_COST_PER_M = 5.0
     OUTPUT_COST_PER_M = 15.0
 
-    def __init__(self, api_key: str, model: str = "") -> None:
+    def __init__(self, api_key: str, model: str = "", base_url: str = "") -> None:
         import os
 
         import openai
 
-        self.client = openai.AsyncOpenAI(api_key=api_key)
+        kwargs: dict[str, Any] = {"api_key": api_key}
+        if base_url:
+            kwargs["base_url"] = base_url
+        self.client = openai.AsyncOpenAI(**kwargs)
         self.model = model or os.environ.get("OPENAI_MODEL", "gpt-4o")
 
     async def complete(
@@ -258,12 +271,64 @@ class OpenAIProvider(LLMProvider):
         )
 
 
+class MiniMaxProvider(OpenAIProvider):
+    """MiniMax implementation using OpenAI-compatible API."""
+
+    # MiniMax M2.5 pricing
+    INPUT_COST_PER_M = 0.30
+    OUTPUT_COST_PER_M = 1.20
+
+    def __init__(self, api_key: str, model: str = "MiniMax-M2.5") -> None:
+        super().__init__(
+            api_key=api_key,
+            model=model,
+            base_url="https://api.minimax.io/v1",
+        )
+
+    async def complete(
+        self, messages: list[dict[str, str]], system: str = ""
+    ) -> LLMResponse:
+        all_messages = []
+        if system:
+            all_messages.append({"role": "system", "content": system})
+        all_messages.extend(messages)
+
+        response = await self.client.chat.completions.create(
+            model=self.model,
+            max_tokens=16384,
+            messages=all_messages,
+        )
+
+        if not response.choices:
+            raise RuntimeError(f"LLM returned no choices (model={self.model})")
+        raw_text = response.choices[0].message.content or ""
+        text = self._clean_text(raw_text)
+        input_tokens = response.usage.prompt_tokens if response.usage else 0
+        output_tokens = response.usage.completion_tokens if response.usage else 0
+
+        cost = (
+            (input_tokens / 1_000_000) * self.INPUT_COST_PER_M
+            + (output_tokens / 1_000_000) * self.OUTPUT_COST_PER_M
+        )
+
+        return LLMResponse(
+            text=text,
+            provider="minimax",
+            model=self.model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=cost,
+        )
+
+
 def create_llm(provider: str, api_key: str) -> LLMProvider:
     """Factory function to create an LLM provider."""
     if provider == "anthropic":
         return AnthropicProvider(api_key)
     elif provider == "openai":
         return OpenAIProvider(api_key)
+    elif provider == "minimax":
+        return MiniMaxProvider(api_key)
     else:
         raise ValueError(f"Unknown provider: {provider}")
 
@@ -273,5 +338,6 @@ __all__ = [
     "LLMProvider",
     "AnthropicProvider",
     "OpenAIProvider",
+    "MiniMaxProvider",
     "create_llm",
 ]

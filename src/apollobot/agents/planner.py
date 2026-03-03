@@ -102,6 +102,28 @@ class ResearchPlan(BaseModel):
     estimated_compute_cost: float = 0.0
     estimated_time_hours: float = 0.0
 
+    @field_validator("hypotheses", mode="before")
+    @classmethod
+    def coerce_hypotheses(cls, v: Any) -> list[dict[str, str]]:
+        """Coerce hypothesis dicts to have all-string values.
+
+        The LLM sometimes returns booleans or ints for fields like
+        ``falsification_criteria_prespecified``.  Pydantic's
+        ``dict[str, str]`` annotation rejects non-string values, so we
+        stringify everything here.
+        """
+        if not isinstance(v, list):
+            return []
+        result: list[dict[str, str]] = []
+        for item in v:
+            if isinstance(item, dict):
+                result.append({str(k): str(val) for k, val in item.items()})
+            elif isinstance(item, str):
+                result.append({"hypothesis": item})
+            else:
+                result.append({"hypothesis": str(item)})
+        return result
+
     @field_validator("risks", "expected_outputs", "literature_queries", mode="before")
     @classmethod
     def coerce_str_list(cls, v: Any) -> list[str]:
@@ -327,9 +349,13 @@ class ResearchPlanner:
                 f"Original plan:\n{plan.model_dump_json(indent=2)}\n\n"
                 f"Critique:\n{json.dumps(critique, indent=2)}\n\n"
                 "Revise the plan to address these issues. Return the complete "
-                "revised plan as JSON with the same schema."
+                "revised plan as JSON with the same schema.\n\n"
+                "IMPORTANT: Your entire response must be a single JSON object. "
+                "Do NOT include any text, explanation, or markdown before or after "
+                "the JSON. Start with { and end with }."
             )}],
             system=PLANNER_SYSTEM,
+            retries=4,
         )
         resp.pop("mission_id", None)
         return ResearchPlan(mission_id=mission.id, **resp)

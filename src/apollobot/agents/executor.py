@@ -89,6 +89,7 @@ class ResearchExecutor:
             (Phase.STATISTICAL_TESTING, self._statistical_testing),
             (Phase.MANUSCRIPT_DRAFTING, self._draft_manuscript),
             (Phase.SELF_REVIEW, self._self_review),
+            (Phase.MANUSCRIPT_REVISION, self._revise_manuscript),
         ]
 
         for phase, handler in phases:
@@ -277,11 +278,25 @@ class ResearchExecutor:
         """
         Phase 2: Acquire datasets via MCP servers.
         """
-        self.provenance.log_event("data_acquisition_started")
+        self.provenance.log_event("data_acquisition_started", {
+            "requirements": [
+                {"description": r.description, "source_type": r.source_type,
+                 "server_name": r.server_name, "query_params": r.query_params}
+                for r in plan.data_requirements
+            ],
+        })
+
+        # Build set of registered server names for matching
+        registered_servers = {s.name for s in self.mcp.get_servers()}
 
         acquired = []
         for req in plan.data_requirements:
-            if req.source_type == "mcp_server" and req.server_name:
+            # Accept any requirement that references a registered MCP server,
+            # regardless of source_type.  The LLM often generates source_type
+            # values like "download", "api_call", or "database" instead of the
+            # canonical "mcp_server".
+            has_server = bool(req.server_name and req.server_name in registered_servers)
+            if has_server or (req.source_type == "mcp_server" and req.server_name):
                 try:
                     result = await self.mcp.query(
                         req.server_name,
@@ -348,6 +363,17 @@ class ResearchExecutor:
         """
         self.provenance.log_event("analysis_started")
 
+        # Build file content previews for the LLM
+        file_previews = []
+        raw_dir = session.session_dir / "data" / "raw"
+        for f in sorted(raw_dir.glob("*.json"))[:5]:
+            try:
+                content = f.read_text()[:1500]
+                file_previews.append(f"=== {f.name} ===\n{content}")
+            except Exception:
+                pass
+        file_context = "\n\n".join(file_previews) if file_previews else "No data files found."
+
         results = []
         for step in plan.analysis_steps:
             # Ask LLM to generate analysis code
@@ -361,6 +387,8 @@ class ResearchExecutor:
                     f"Expected output: {step.expected_output}\n\n"
                     f"Available data files in {session.session_dir / 'data' / 'raw'}:\n"
                     f"{[str(f.name) for f in (session.session_dir / 'data' / 'raw').glob('*')]}\n\n"
+                    f"Data file contents (use these exact structures in your code):\n"
+                    f"{file_context}\n\n"
                     "Write clean, documented Python code using standard scientific Python "
                     "(numpy, pandas, scipy, scikit-learn, statsmodels). "
                     "Save results to the session's data/processed directory. "
@@ -381,8 +409,11 @@ class ResearchExecutor:
             # Extract code from response
             code = self._extract_code(code_resp.text)
 
-            # Save script
-            script_path = session.session_dir / "analysis" / "scripts" / f"{step.name}.py"
+            # Save script — sanitize name (LLM may generate names with / or
+            # other path-unsafe characters like "QM/MM Transition State.py")
+            safe_name = step.name.replace("/", "_").replace("\\", "_").replace("..", "_")
+            script_path = session.session_dir / "analysis" / "scripts" / f"{safe_name}.py"
+            script_path.parent.mkdir(parents=True, exist_ok=True)
             script_path.write_text(code)
 
             self.provenance.log_data_transform(
@@ -506,15 +537,47 @@ class ResearchExecutor:
         """
         Phase 5: Draft the manuscript.
 
-        Uses accumulated findings to produce a complete paper draft.
+        Uses data inventory as ground truth to produce a complete paper draft.
+        Includes anti-hallucination guardrails and evidence-level classification.
         """
         self.provenance.log_event("manuscript_drafting_started")
 
-        # Compile all findings
-        all_findings = {}
-        for phase_name, result in session.phase_results.items():
-            if result.findings:
-                all_findings[phase_name] = result.findings
+        # Build data inventory — the ground truth for all claims
+        data_inventory = self._build_data_inventory(session)
+
+        # Classify evidence level based on analysis success rate
+        analysis_result = session.phase_results.get("analysis")
+        if analysis_result:
+            completed = sum(1 for f in analysis_result.findings if f.get("status") == "completed")
+            total = len(analysis_result.findings)
+            if total > 0 and completed / total >= 0.7:
+                evidence_level = "moderate"
+            elif completed > 0:
+                evidence_level = "weak"
+            else:
+                evidence_level = "theoretical"
+        else:
+            evidence_level = "theoretical"
+
+        hedging_map = {
+            "moderate": "results suggest / evidence indicates",
+            "weak": "preliminary findings hint / limited evidence suggests",
+            "theoretical": "we hypothesize / computational analysis proposes",
+        }
+
+        system_prompt = (
+            "You are writing a scientific paper for peer review.\n\n"
+            "STRICT RULES — VIOLATION MEANS REJECTION:\n"
+            "1. NEVER invent numbers, statistics, p-values, or measurements not in the data inventory\n"
+            "2. If the data inventory shows no results for a claim, write "
+            '"No empirical data was obtained for this analysis"\n'
+            "3. Tables must ONLY contain values from the data inventory — no fabricated rows\n"
+            f"4. Use hedging language proportional to evidence: {evidence_level} evidence → "
+            f"{hedging_map[evidence_level]}\n"
+            "5. Distinguish computational predictions from experimental results\n"
+            "6. All claims must cite specific data from the inventory by filename\n\n"
+            f"Evidence level for this manuscript: {evidence_level}"
+        )
 
         # Generate each section
         sections = ["abstract", "introduction", "methods", "results", "discussion", "conclusion"]
@@ -527,18 +590,16 @@ class ResearchExecutor:
                     f"Research objective: {session.mission.objective}\n"
                     f"Domain: {session.mission.domain}\n"
                     f"Approach: {plan.approach}\n\n"
-                    f"Findings:\n{json.dumps(all_findings, indent=2, default=str)[:3000]}\n\n"
                     f"Literature context: {len(session.literature_corpus)} papers reviewed\n"
                     f"Datasets used: {len(session.datasets)}\n\n"
+                    f"DATA INVENTORY (ground truth — only report what appears here):\n"
+                    f"{data_inventory}\n\n"
                     "Write in clear, precise scientific prose. "
                     "Be specific about methods and results. "
-                    "Acknowledge limitations in the discussion."
+                    "Acknowledge limitations in the discussion. "
+                    "If no data supports a claim, state that explicitly rather than inventing data."
                 )}],
-                system=(
-                    "You are writing a scientific paper for peer review. "
-                    "Use formal academic style. Be precise and evidence-based. "
-                    "Do not overstate findings. Clearly distinguish correlation from causation."
-                ),
+                system=system_prompt,
             )
 
             manuscript_parts[section] = resp.text
@@ -560,7 +621,8 @@ class ResearchExecutor:
 
         return (
             "Manuscript draft completed",
-            [{"type": "manuscript", "sections": list(manuscript_parts.keys())}],
+            [{"type": "manuscript", "sections": list(manuscript_parts.keys()),
+              "evidence_level": evidence_level}],
         )
 
     async def _self_review(
@@ -630,6 +692,148 @@ class ResearchExecutor:
             findings.append({"type": "translation_candidate", "flagged": True})
 
         return ("Self-review completed", findings)
+
+    async def _revise_manuscript(
+        self, session: Session, plan: ResearchPlan
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """
+        Phase 6b: Revise manuscript based on self-review.
+
+        Reads self_review.md, identifies actionable criticisms,
+        rewrites the manuscript addressing them without fabricating data.
+        """
+        self.provenance.log_event("manuscript_revision_started")
+
+        review_path = session.session_dir / "review" / "self_review.md"
+        review_text = review_path.read_text() if review_path.exists() else ""
+
+        manuscript_path = session.session_dir / "manuscript.md"
+        manuscript_text = manuscript_path.read_text() if manuscript_path.exists() else ""
+
+        data_inventory = self._build_data_inventory(session)
+
+        resp = await self.llm.complete(
+            messages=[{"role": "user", "content": (
+                "Revise this manuscript to address every criticism from the self-review.\n\n"
+                f"SELF-REVIEW:\n{review_text[:6000]}\n\n"
+                f"CURRENT MANUSCRIPT:\n{manuscript_text[:12000]}\n\n"
+                f"DATA INVENTORY (ground truth):\n{data_inventory[:6000]}\n\n"
+                "For each criticism:\n"
+                "- If data exists to address it, add the data\n"
+                "- If no data exists, remove the unsupported claim and note the limitation\n"
+                "- Fix all statistical errors identified\n"
+                "- Restate overstatements with appropriate hedging\n"
+                "- Add missing limitations\n\n"
+                "Output the complete revised manuscript in markdown."
+            )}],
+            system=(
+                "You are revising a scientific manuscript based on peer review feedback. "
+                "NEVER fabricate data to address a criticism. If the reviewer says data is missing, "
+                "acknowledge the limitation — do not invent data to fill the gap. "
+                "Remove claims that cannot be supported by the data inventory."
+            ),
+        )
+
+        session.cost.record_llm_call(
+            resp.input_tokens, resp.output_tokens, resp.cost_usd
+        )
+
+        # Overwrite manuscript markdown
+        manuscript_path.write_text(resp.text)
+
+        # Regenerate LaTeX from revised markdown sections
+        sections = ["abstract", "introduction", "methods", "results", "discussion", "conclusion"]
+        manuscript_parts = {}
+        current_section = None
+        current_lines: list[str] = []
+
+        for line in resp.text.split("\n"):
+            lower = line.strip().lower()
+            matched_section = None
+            for s in sections:
+                if lower.startswith(f"## {s}") or lower.startswith(f"# {s}"):
+                    matched_section = s
+                    break
+            if matched_section:
+                if current_section:
+                    manuscript_parts[current_section] = "\n".join(current_lines)
+                current_section = matched_section
+                current_lines = []
+            elif current_section:
+                current_lines.append(line)
+
+        if current_section:
+            manuscript_parts[current_section] = "\n".join(current_lines)
+
+        if manuscript_parts:
+            latex = self._assemble_latex(session, plan, manuscript_parts)
+            tex_path = session.session_dir / "manuscript.tex"
+            tex_path.write_text(latex)
+
+        self.provenance.log_event("manuscript_revision_completed")
+
+        return (
+            "Manuscript revised based on self-review",
+            [{"type": "revision", "changes": "Addressed self-review criticisms"}],
+        )
+
+    # ------------------------------------------------------------------
+    # Data inventory
+    # ------------------------------------------------------------------
+
+    def _build_data_inventory(self, session: Session) -> str:
+        """Build a structured inventory of all acquired and processed data."""
+        inventory_parts = []
+
+        # Raw data files
+        raw_dir = session.session_dir / "data" / "raw"
+        for f in sorted(raw_dir.glob("*.json")):
+            try:
+                data = json.loads(f.read_text())
+                if isinstance(data, dict):
+                    record_counts = {k: len(v) if isinstance(v, list) else 1 for k, v in data.items()}
+                    preview = json.dumps(data, indent=2, default=str)[:2000]
+                elif isinstance(data, list):
+                    record_counts = {"records": len(data)}
+                    preview = json.dumps(data[:3], indent=2, default=str)[:2000]
+                else:
+                    record_counts = {"value": 1}
+                    preview = str(data)[:500]
+                inventory_parts.append(
+                    f"### {f.name}\nRecord counts: {record_counts}\nPreview:\n{preview}\n"
+                )
+            except Exception:
+                inventory_parts.append(f"### {f.name}\n[Could not read]\n")
+
+        # Processed data files
+        proc_dir = session.session_dir / "data" / "processed"
+        for f in sorted(proc_dir.glob("*")):
+            try:
+                content = f.read_text()[:3000]
+                inventory_parts.append(f"### {f.name} (processed)\n{content}\n")
+            except Exception:
+                inventory_parts.append(f"### {f.name} (processed)\n[Could not read]\n")
+
+        # Analysis stdout results
+        analysis_result = session.phase_results.get("analysis")
+        if analysis_result:
+            for finding in analysis_result.findings:
+                if finding.get("status") == "completed" and finding.get("stdout"):
+                    inventory_parts.append(
+                        f"### Analysis: {finding['step']}\n{finding['stdout']}\n"
+                    )
+
+        # Statistical testing results
+        stats_result = session.phase_results.get("statistical_testing")
+        if stats_result and stats_result.findings:
+            inventory_parts.append(
+                f"### Statistical Tests\n{json.dumps(stats_result.findings, indent=2, default=str)[:3000]}\n"
+            )
+
+        if not inventory_parts:
+            return "NO DATA AVAILABLE. All sections must state that no empirical data was collected."
+
+        return "\n".join(inventory_parts)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -759,16 +963,39 @@ class ResearchExecutor:
         return text
 
     async def _run_statistical_audit(self, session: Session) -> dict[str, Any]:
-        """Automated statistical audit of results."""
-        # In v1, this is a simplified check
-        # In production, this runs formal statistical validation
-        return {
-            "audit_version": "0.1.0",
-            "checks": [
-                {"name": "multiple_comparisons", "status": "checked", "note": "FDR correction applied"},
-                {"name": "effect_sizes", "status": "checked", "note": "Reported with CIs"},
-                {"name": "sample_sizes", "status": "checked", "note": "Adequate for primary analyses"},
-                {"name": "assumptions", "status": "needs_review", "note": "Normality assumptions should be verified"},
-            ],
-            "overall": "pass_with_notes",
-        }
+        """LLM-based statistical audit of manuscript claims vs actual data."""
+        manuscript_path = session.session_dir / "manuscript.md"
+        manuscript_text = manuscript_path.read_text()[:6000] if manuscript_path.exists() else ""
+        data_inventory = self._build_data_inventory(session)
+
+        resp = await self.llm.complete(
+            messages=[{"role": "user", "content": (
+                "Audit the statistical claims in this manuscript against the actual data.\n\n"
+                f"MANUSCRIPT:\n{manuscript_text}\n\n"
+                f"DATA INVENTORY:\n{data_inventory[:4000]}\n\n"
+                "Check each of these and respond ONLY with JSON:\n"
+                "1. multiple_comparisons — was correction applied when needed?\n"
+                "2. effect_sizes — are they reported with CIs?\n"
+                "3. sample_sizes — adequate for claims made?\n"
+                "4. assumptions — are statistical test assumptions met?\n"
+                "5. fabrication_check — do all numbers in manuscript match data inventory?\n\n"
+                '{"checks": [{"name": "...", "status": "pass|fail|not_applicable", "note": "..."}], '
+                '"overall": "pass|pass_with_notes|fail", "fabrication_detected": true/false}'
+            )}],
+            system="You are a statistical auditor. Be strict. Flag any number in the manuscript not traceable to the data inventory.",
+        )
+
+        session.cost.record_llm_call(
+            resp.input_tokens, resp.output_tokens, resp.cost_usd
+        )
+
+        try:
+            audit = json.loads(self._extract_json(resp.text))
+        except (json.JSONDecodeError, ValueError):
+            audit = {
+                "checks": [{"name": "audit_failed", "status": "fail", "note": "Could not parse audit"}],
+                "overall": "fail",
+            }
+
+        audit["audit_version"] = "0.2.0"
+        return audit

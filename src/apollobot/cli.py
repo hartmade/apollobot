@@ -59,7 +59,7 @@ def init() -> None:
     email = Prompt.ask("  Email", default="")
     orcid = Prompt.ask("  ORCID (optional)", default="")
 
-    provider = Prompt.ask("  Default AI provider", choices=["anthropic", "openai"], default="anthropic")
+    provider = Prompt.ask("  Default AI provider", choices=["anthropic", "openai", "minimax"], default="anthropic")
     api_key = Prompt.ask(f"  {provider.title()} API key", password=True, default="")
 
     domain = Prompt.ask(
@@ -77,6 +77,7 @@ def init() -> None:
             default_provider=provider,
             anthropic_api_key=api_key if provider == "anthropic" else "",
             openai_api_key=api_key if provider == "openai" else "",
+            minimax_api_key=api_key if provider == "minimax" else "",
         ),
         compute=ComputeConfig(mode=compute_mode, max_budget_usd=max_budget),
         default_domain=domain,
@@ -807,6 +808,36 @@ def notify_setup():
     save_config(config)
 
     console.print(f"\n[green]>[/green] Added {ch_type} channel. Run [bold]apollo notify test[/bold] to verify.")
+
+
+# ---------------------------------------------------------------------------
+# MCP Server
+# ---------------------------------------------------------------------------
+
+
+@main.command()
+@click.option(
+    "--transport",
+    type=click.Choice(["stdio", "streamable-http", "sse"]),
+    default="stdio",
+    help="MCP transport protocol",
+)
+@click.option("--host", default="0.0.0.0", help="Host for HTTP/SSE transport")
+@click.option("--port", type=int, default=8080, help="Port for HTTP/SSE transport")
+def serve(transport, host, port):
+    """Start ApolloBot as an MCP server for AI-to-AI integration."""
+    from apollobot.server.app import mcp as mcp_server
+
+    console.print(f"[bold green]ApolloBot MCP Server[/bold green]")
+    console.print(f"  Transport: {transport}")
+    if transport != "stdio":
+        console.print(f"  Endpoint:  http://{host}:{port}/mcp")
+    console.print()
+
+    if transport == "stdio":
+        mcp_server.run(transport="stdio")
+    else:
+        mcp_server.run(transport=transport, host=host, port=port)
 
 
 # ---------------------------------------------------------------------------

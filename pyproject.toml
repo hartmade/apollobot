@@ -47,6 +47,7 @@ dependencies = [
     "aiofiles>=23.2.0",
     "python-dotenv>=1.0.0",
     "tiktoken>=0.7.0",
+    "mcp[cli]>=1.2.0",
 ]
 
 [project.optional-dependencies]
@@ -83,6 +84,7 @@ all = [
 
 [project.scripts]
 apollo = "apollobot.cli:main"
+apollobot-server = "apollobot.server:run_server"
 
 [project.urls]
 Homepage = "https://frontierscience.ai"
@@ -104,6 +106,10 @@ ignore = ["ANN101", "ANN102", "S101"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "smoke: quick sanity checks that verify the server boots and tools are callable",
+    "evaluation: deeper functional tests that exercise realistic tool flows",
+]
 
 [tool.mypy]
 python_version = "3.11"
