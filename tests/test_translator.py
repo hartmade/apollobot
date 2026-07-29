@@ -162,12 +162,14 @@ class TestResearchTranslator:
     def mock_llm(self):
         llm = MagicMock()
         response = MagicMock()
-        response.text = json.dumps({
-            "commercial_relevance": 8,
-            "implementation_feasibility": 7,
-            "novelty": 9,
-            "summary": "High translation potential",
-        })
+        response.text = json.dumps(
+            {
+                "commercial_relevance": 8,
+                "implementation_feasibility": 7,
+                "novelty": 9,
+                "summary": "High translation potential",
+            }
+        )
         response.provider = "anthropic"
         response.model = "claude-sonnet"
         response.input_tokens = 100
@@ -225,11 +227,13 @@ class TestResearchTranslator:
     @pytest.mark.asyncio
     async def test_prior_art_phase(self, translator, session, mock_llm):
         """Test that prior art phase analyzes IP landscape."""
-        mock_llm.complete.return_value.text = json.dumps({
-            "freedom_to_operate": "clear",
-            "patentability_assessment": "Patentable",
-            "prior_art_summary": "No blocking prior art",
-        })
+        mock_llm.complete.return_value.text = json.dumps(
+            {
+                "freedom_to_operate": "clear",
+                "patentability_assessment": "Patentable",
+                "prior_art_summary": "No blocking prior art",
+            }
+        )
         report = TranslationReport.model_validate(session.translation_report)
         summary, findings = await translator._prior_art(session, report)
 
@@ -239,11 +243,13 @@ class TestResearchTranslator:
     @pytest.mark.asyncio
     async def test_specify_phase(self, translator, session, mock_llm):
         """Test that specify phase creates implementation spec."""
-        mock_llm.complete.return_value.text = json.dumps({
-            "title": "Test Implementation",
-            "target_platform": "Python library",
-            "architecture_overview": "Microservices",
-        })
+        mock_llm.complete.return_value.text = json.dumps(
+            {
+                "title": "Test Implementation",
+                "target_platform": "Python library",
+                "architecture_overview": "Microservices",
+            }
+        )
         report = TranslationReport.model_validate(session.translation_report)
         summary, findings = await translator._specify(session, report)
 
@@ -252,11 +258,13 @@ class TestResearchTranslator:
     @pytest.mark.asyncio
     async def test_validate_phase(self, translator, session, mock_llm):
         """Test that validate phase assesses feasibility."""
-        mock_llm.complete.return_value.text = json.dumps({
-            "overall_rating": "high",
-            "technical_feasibility": 8,
-            "key_risks": ["Data availability"],
-        })
+        mock_llm.complete.return_value.text = json.dumps(
+            {
+                "overall_rating": "high",
+                "technical_feasibility": 8,
+                "key_risks": ["Data availability"],
+            }
+        )
         report = TranslationReport.model_validate(session.translation_report)
         summary, findings = await translator._validate(session, report)
 

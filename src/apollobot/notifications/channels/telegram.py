@@ -76,8 +76,14 @@ class TelegramChannel(NotificationChannel):
             payload["reply_markup"] = {
                 "inline_keyboard": [
                     [
-                        {"text": "\u2705 Approve", "callback_data": f"approve:{event.session_id}:{event.phase}"},
-                        {"text": "\u274c Deny", "callback_data": f"deny:{event.session_id}:{event.phase}"},
+                        {
+                            "text": "\u2705 Approve",
+                            "callback_data": f"approve:{event.session_id}:{event.phase}",
+                        },
+                        {
+                            "text": "\u274c Deny",
+                            "callback_data": f"deny:{event.session_id}:{event.phase}",
+                        },
                     ]
                 ]
             }
@@ -95,9 +101,7 @@ class TelegramChannel(NotificationChannel):
             if not self._client:
                 await client.aclose()
 
-    async def wait_for_response(
-        self, event: NotificationEvent, timeout: float = 3600
-    ) -> bool:
+    async def wait_for_response(self, event: NotificationEvent, timeout: float = 3600) -> bool:
         """Poll for inline keyboard callback response."""
         client = self._client or httpx.AsyncClient(timeout=30.0)
         deadline = asyncio.get_event_loop().time() + timeout
@@ -123,14 +127,10 @@ class TelegramChannel(NotificationChannel):
                             cb_data = callback.get("data", "")
 
                             if cb_data == expected_prefix:
-                                await self._answer_callback(
-                                    client, callback["id"], "Approved"
-                                )
+                                await self._answer_callback(client, callback["id"], "Approved")
                                 return True
                             elif cb_data == deny_prefix:
-                                await self._answer_callback(
-                                    client, callback["id"], "Denied"
-                                )
+                                await self._answer_callback(client, callback["id"], "Denied")
                                 return False
                 except httpx.HTTPError:
                     logger.debug("Telegram poll error", exc_info=True)

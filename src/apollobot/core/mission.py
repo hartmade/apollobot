@@ -108,9 +108,7 @@ class Mission(BaseModel):
     source_session: str = ""  # session ID to translate/implement from
     source_paper: str = ""  # external paper DOI to translate
 
-    created_at: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     def model_post_init(self, __context: Any) -> None:

@@ -1,22 +1,21 @@
 """Tests for apollobot.core configuration module."""
 
-import pytest
 from pathlib import Path
-import tempfile
+
 import yaml
 
 from apollobot.core import (
-    APOLLO_HOME,
-    APOLLO_SESSIONS_DIR,
     APOLLO_CONFIG_FILE,
+    APOLLO_HOME,
     APOLLO_SERVERS_FILE,
-    UserIdentity,
+    APOLLO_SESSIONS_DIR,
     APIConfig,
-    ComputeConfig,
     ApolloConfig,
+    ComputeConfig,
+    UserIdentity,
     load_config,
-    save_config,
     load_custom_servers,
+    save_config,
 )
 
 
@@ -128,9 +127,7 @@ class TestApolloConfig:
     def test_config_with_custom_servers(self):
         """Test config with custom MCP servers."""
         config = ApolloConfig(
-            custom_servers=[
-                {"name": "my-server", "url": "https://example.com/mcp"}
-            ]
+            custom_servers=[{"name": "my-server", "url": "https://example.com/mcp"}]
         )
         assert len(config.custom_servers) == 1
         assert config.custom_servers[0]["name"] == "my-server"
@@ -167,6 +164,19 @@ class TestConfigIO:
         assert loaded.identity.name == "Test User"
         assert loaded.default_domain == "physics"
 
+    def test_environment_overrides_deploy_time_model_settings(self, monkeypatch, temp_dir):
+        fake_config = temp_dir / "nonexistent" / "config.yaml"
+        monkeypatch.setattr("apollobot.core.APOLLO_CONFIG_FILE", fake_config)
+        monkeypatch.setenv("APOLLOBOT_MODEL_PROVIDER", "openai")
+        monkeypatch.setenv("OPENAI_API_KEY", "deploy-secret")
+        monkeypatch.setenv("APOLLOBOT_OUTPUT_DIR", str(temp_dir / "research"))
+
+        config = load_config()
+
+        assert config.api.default_provider == "openai"
+        assert config.api.get_key() == "deploy-secret"
+        assert config.output_dir == str(temp_dir / "research")
+
     def test_load_custom_servers_empty_when_no_file(self, monkeypatch, temp_dir):
         """Test load_custom_servers returns empty list when no file."""
         fake_servers = temp_dir / "servers.yaml"
@@ -181,9 +191,7 @@ class TestConfigIO:
         monkeypatch.setattr("apollobot.core.APOLLO_SERVERS_FILE", fake_servers)
 
         servers_data = {
-            "custom_servers": [
-                {"name": "test-server", "url": "https://test.example.com"}
-            ]
+            "custom_servers": [{"name": "test-server", "url": "https://test.example.com"}]
         }
         fake_servers.write_text(yaml.dump(servers_data))
 

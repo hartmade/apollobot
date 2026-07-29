@@ -10,16 +10,15 @@ manages the full research lifecycle.
 
 from __future__ import annotations
 
-import asyncio
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 from rich.console import Console
 
 from apollobot.agents import LLMProvider, create_llm
 from apollobot.agents.executor import CheckpointHandler, ResearchExecutor
-from apollobot.agents.planner import ResearchPlanner
-from apollobot.core import ApolloConfig, APOLLO_SESSIONS_DIR, load_config
+from apollobot.agents.planner import ResearchPlan, ResearchPlanner
+from apollobot.core import ApolloConfig, load_config
 from apollobot.core.mission import Mission, ResearchMode
 from apollobot.core.provenance import ProvenanceEngine
 from apollobot.core.session import Phase, Session
@@ -78,14 +77,19 @@ class Orchestrator:
         self,
         config: ApolloConfig | None = None,
         interactive: bool = True,
+        llm_factory: Callable[[], LLMProvider] | None = None,
     ) -> None:
         self.config = config or load_config()
         self.interactive = interactive
 
         # Initialize LLM
-        self.llm: LLMProvider = create_llm(
-            provider=self.config.api.default_provider,
-            api_key=self.config.api.get_key(),
+        self.llm: LLMProvider = (
+            llm_factory()
+            if llm_factory
+            else create_llm(
+                provider=self.config.api.default_provider,
+                api_key=self.config.api.get_key(),
+            )
         )
 
         # Initialize MCP client
@@ -132,13 +136,17 @@ class Orchestrator:
     # Discover mode (original research)
     # ------------------------------------------------------------------
 
-    async def run_discover(self, mission: Mission) -> Session:
+    async def run_discover(
+        self,
+        mission: Mission,
+        plan: ResearchPlan | None = None,
+    ) -> Session:
         """
         Execute a Discover (research) session.
 
         This is the original research mode from v0.1.0.
         """
-        console.print(f"\n[bold green]ApolloBot — Discover Mode[/bold green]")
+        console.print("\n[bold green]ApolloBot — Discover Mode[/bold green]")
         console.print(f"[dim]Session: {mission.id}[/dim]")
         console.print(f"[bold]Objective:[/bold] {mission.objective}\n")
 
@@ -149,16 +157,23 @@ class Orchestrator:
         await self._connect_mcp_servers(mission.domain)
 
         available_servers = [s.name for s in self.mcp.get_servers(mission.domain)]
-        console.print(f"[green]>[/green] Connected to {len(available_servers)} MCP servers")
+        console.print(f"[green]>[/green] Registered {len(available_servers)} data sources")
         for name in available_servers:
             console.print(f"  [dim]- {name}[/dim]")
 
-        # Plan
-        console.print("\n[bold]Planning research...[/bold]")
-        planner = ResearchPlanner(self.llm, provenance)
-        plan = await planner.plan(mission, available_servers)
+        # Plan. Service callers may provide the exact human-approved plan so
+        # execution never silently replaces what the user inspected.
+        if plan is None:
+            console.print("\n[bold]Planning research...[/bold]")
+            planner = ResearchPlanner(self.llm, provenance)
+            plan = await planner.plan(mission, available_servers)
+        else:
+            provenance.log_event(
+                "approved_plan_loaded",
+                {"mission_id": mission.id, "plan_summary": plan.summary},
+            )
 
-        console.print(f"[green]>[/green] Plan created")
+        console.print("[green]>[/green] Plan created")
         console.print(f"  [dim]- {len(plan.literature_queries)} literature queries[/dim]")
         console.print(f"  [dim]- {len(plan.data_requirements)} data requirements[/dim]")
         console.print(f"  [dim]- {len(plan.analysis_steps)} analysis steps[/dim]")
@@ -202,7 +217,7 @@ class Orchestrator:
         """
         from apollobot.agents.translator import ResearchTranslator
 
-        console.print(f"\n[bold green]ApolloBot — Translate Mode[/bold green]")
+        console.print("\n[bold green]ApolloBot — Translate Mode[/bold green]")
         console.print(f"[dim]Session: {mission.id}[/dim]")
 
         session, provenance, heartbeat = await self._setup_session(mission)
@@ -218,7 +233,9 @@ class Orchestrator:
                 provenance.link_source_session(mission.source_session, source_dir)
                 console.print(f"[green]>[/green] Loaded source session: {mission.source_session}")
             else:
-                console.print(f"[yellow]Warning: Source session {mission.source_session} not found[/yellow]")
+                console.print(
+                    f"[yellow]Warning: Source session {mission.source_session} not found[/yellow]"
+                )
 
         # Initialize translation report
         report = TranslationReport(
@@ -256,7 +273,7 @@ class Orchestrator:
         """
         from apollobot.agents.implementor import ResearchImplementor
 
-        console.print(f"\n[bold green]ApolloBot — Implement Mode[/bold green]")
+        console.print("\n[bold green]ApolloBot — Implement Mode[/bold green]")
         console.print(f"[dim]Session: {mission.id}[/dim]")
 
         session, provenance, heartbeat = await self._setup_session(mission)
@@ -299,7 +316,7 @@ class Orchestrator:
         """
         from apollobot.agents.commercializer import Commercializer
 
-        console.print(f"\n[bold green]ApolloBot — Commercialize Mode[/bold green]")
+        console.print("\n[bold green]ApolloBot — Commercialize Mode[/bold green]")
         console.print(f"[dim]Session: {mission.id}[/dim]")
 
         session, provenance, heartbeat = await self._setup_session(mission)
@@ -345,7 +362,7 @@ class Orchestrator:
         Human checkpoints at each mode boundary. With auto_translate=True,
         automatically proceeds to Translate if translation score >= 7.
         """
-        console.print(f"\n[bold green]ApolloBot — Full Pipeline Mode[/bold green]")
+        console.print("\n[bold green]ApolloBot — Full Pipeline Mode[/bold green]")
         console.print(f"[dim]Session: {mission.id}[/dim]")
         console.print(f"[bold]Objective:[/bold] {mission.objective}\n")
 
@@ -372,8 +389,7 @@ class Orchestrator:
             proceed_translate = True
         elif self.interactive:
             proceed_translate = await self.checkpoint.request_approval(
-                "pipeline_translate",
-                f"Proceed to Translate mode? (score: {avg_score:.1f}/10)"
+                "pipeline_translate", f"Proceed to Translate mode? (score: {avg_score:.1f}/10)"
             )
 
         if not proceed_translate:
@@ -397,8 +413,7 @@ class Orchestrator:
         # Checkpoint before Implement
         if self.interactive:
             proceed_implement = await self.checkpoint.request_approval(
-                "pipeline_implement",
-                "Proceed to Implement mode?"
+                "pipeline_implement", "Proceed to Implement mode?"
             )
             if not proceed_implement:
                 console.print("[dim]Pipeline stopped after Translate.[/dim]")
@@ -421,8 +436,7 @@ class Orchestrator:
         # Checkpoint before Commercialize
         if self.interactive:
             proceed_comm = await self.checkpoint.request_approval(
-                "pipeline_commercialize",
-                "Proceed to Commercialize mode?"
+                "pipeline_commercialize", "Proceed to Commercialize mode?"
             )
             if not proceed_comm:
                 console.print("[dim]Pipeline stopped after Implement.[/dim]")
@@ -464,20 +478,28 @@ class Orchestrator:
         session.init_directories()
 
         provenance = ProvenanceEngine(session.session_dir)
-        provenance.log_event("session_started", {
-            "mission_id": mission.id,
-            "objective": mission.objective,
-            "mode": mission.mode.value,
-            "domain": mission.domain,
-        })
+        provenance.log_event(
+            "session_started",
+            {
+                "mission_id": mission.id,
+                "objective": mission.objective,
+                "mode": mission.mode.value,
+                "domain": mission.domain,
+                "model_id": mission.metadata.get("model_id"),
+                "model_provider_tag": mission.metadata.get("model_provider_tag"),
+                "model_catalog_version": mission.metadata.get("model_catalog_version"),
+            },
+        )
 
-        await self.router.dispatch(NotificationEvent(
-            event_type=EventType.SESSION_STARTED,
-            session_id=mission.id,
-            title=f"{mission.mode.value.title()} session started",
-            summary=f"Objective: {mission.objective}",
-            details={"mode": mission.mode.value, "domain": mission.domain},
-        ))
+        await self.router.dispatch(
+            NotificationEvent(
+                event_type=EventType.SESSION_STARTED,
+                session_id=mission.id,
+                title=f"{mission.mode.value.title()} session started",
+                summary=f"Objective: {mission.objective}",
+                details={"mode": mission.mode.value, "domain": mission.domain},
+            )
+        )
 
         heartbeat = HeartbeatMonitor(
             self.router,
@@ -500,26 +522,33 @@ class Orchestrator:
         await heartbeat.stop()
 
         if session.current_phase.value == "complete":
-            await self.router.dispatch(NotificationEvent(
-                event_type=EventType.SESSION_COMPLETED,
-                session_id=mission.id,
-                title=f"{mission.mode.value.title()} session complete",
-                summary=f"Cost: ${session.cost.total_cost:.2f} | LLM calls: {session.cost.llm_calls}",
-                details={
-                    "cost_usd": session.cost.total_cost,
-                    "llm_calls": session.cost.llm_calls,
-                    "output_dir": str(session.session_dir),
-                },
-            ))
+            await self.router.dispatch(
+                NotificationEvent(
+                    event_type=EventType.SESSION_COMPLETED,
+                    session_id=mission.id,
+                    title=f"{mission.mode.value.title()} session complete",
+                    summary=(
+                        f"Cost: ${session.cost.total_cost:.2f} | "
+                        f"LLM calls: {session.cost.llm_calls}"
+                    ),
+                    details={
+                        "cost_usd": session.cost.total_cost,
+                        "llm_calls": session.cost.llm_calls,
+                        "output_dir": str(session.session_dir),
+                    },
+                )
+            )
         else:
-            await self.router.dispatch(NotificationEvent(
-                event_type=EventType.SESSION_FAILED,
-                severity=EventSeverity.ERROR,
-                session_id=mission.id,
-                title=f"{mission.mode.value.title()} session failed",
-                summary=f"Ended in phase: {session.current_phase.value}",
-                details={"final_phase": session.current_phase.value},
-            ))
+            await self.router.dispatch(
+                NotificationEvent(
+                    event_type=EventType.SESSION_FAILED,
+                    severity=EventSeverity.ERROR,
+                    session_id=mission.id,
+                    title=f"{mission.mode.value.title()} session failed",
+                    summary=f"Ended in phase: {session.current_phase.value}",
+                    details={"final_phase": session.current_phase.value},
+                )
+            )
 
         await self.router.disconnect_all()
         self._print_summary(session)
@@ -599,13 +628,15 @@ class Orchestrator:
         """Register and connect domain-specific MCP servers."""
         servers = get_domain_pack(domain)
         for srv in servers:
-            self.mcp.register(MCPServerInfo(
-                name=srv.name,
-                url=srv.url,
-                description=srv.description,
-                domain=srv.domain if srv.domain != "shared" else domain,
-                api_base=srv.api_base,
-            ))
+            self.mcp.register(
+                MCPServerInfo(
+                    name=srv.name,
+                    url=srv.url,
+                    description=srv.description,
+                    domain=srv.domain if srv.domain != "shared" else domain,
+                    api_base=srv.api_base,
+                )
+            )
 
         # Also register any custom servers from config
         for custom in self.config.custom_servers:
@@ -620,7 +651,9 @@ class Orchestrator:
         elif session.current_phase.value == "failed":
             console.print("[bold red]Session failed[/bold red]")
         else:
-            console.print(f"[bold yellow]Session ended in phase: {session.current_phase.value}[/bold yellow]")
+            console.print(
+                f"[bold yellow]Session ended in phase: {session.current_phase.value}[/bold yellow]"
+            )
 
         console.print(f"\n[bold]Mode:[/bold] {session.mission.mode.value}")
         console.print(f"[bold]Cost:[/bold] ${session.cost.total_cost:.2f}")
@@ -641,7 +674,10 @@ class Orchestrator:
             if avg >= 7.0:
                 console.print("[green]Flagged as translation candidate[/green]")
 
-        console.print(f"\n[dim]Submit to Frontier Science Journal: apollo submit --session {session.mission.id}[/dim]")
+        console.print(
+            "\n[dim]Submit to Frontier Science Journal: "
+            f"apollo submit --session {session.mission.id}[/dim]"
+        )
         console.print("=" * 60)
 
 

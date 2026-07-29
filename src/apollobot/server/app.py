@@ -92,10 +92,7 @@ async def _get_active(ctx: Any, session_id: str) -> ActiveSession | dict[str, An
 def _session_summary(active: ActiveSession) -> dict[str, Any]:
     """Build a summary dict from an active session."""
     s = active.session
-    completed_phases = [
-        phase for phase, result in s.phase_results.items()
-        if result.completed_at
-    ]
+    completed_phases = [phase for phase, result in s.phase_results.items() if result.completed_at]
     return {
         "session_id": active.session_id,
         "objective": active.mission.objective,
@@ -106,9 +103,7 @@ def _session_summary(active: ActiveSession) -> dict[str, Any]:
         "cost": {
             "total_usd": s.cost.total_cost,
             "llm_calls": s.cost.llm_calls,
-            "budget_remaining": max(
-                0, s.mission.constraints.compute_budget - s.cost.total_cost
-            ),
+            "budget_remaining": max(0, s.mission.constraints.compute_budget - s.cost.total_cost),
         },
         "datasets_count": len(s.datasets),
         "warnings": s.warnings,
@@ -155,6 +150,7 @@ async def create_mission(
 
         if mission_yaml:
             import yaml
+
             raw = yaml.safe_load(mission_yaml)
             mission = Mission(**raw)
         else:
@@ -417,10 +413,7 @@ async def step_phase(
                 )
         else:
             # Find next phase
-            completed = {
-                p for p, r in session.phase_results.items()
-                if r.completed_at
-            }
+            completed = {p for p, r in session.phase_results.items() if r.completed_at}
 
             target_phase = None
             for p in discover_phases:
@@ -511,9 +504,7 @@ async def step_phase(
         # Determine next phase
         phase_idx = discover_phases.index(target_phase)
         next_phase = (
-            discover_phases[phase_idx + 1].value
-            if phase_idx + 1 < len(discover_phases)
-            else None
+            discover_phases[phase_idx + 1].value if phase_idx + 1 < len(discover_phases) else None
         )
 
         return {
@@ -628,8 +619,9 @@ async def approve_checkpoint(
     return {
         "checkpoint": checkpoint_info,
         "approved": approved,
-        "message": "Checkpoint approved — execution will continue." if approved
-                   else "Checkpoint denied — execution will stop.",
+        "message": "Checkpoint approved — execution will continue."
+        if approved
+        else "Checkpoint denied — execution will stop.",
     }
 
 
@@ -673,13 +665,15 @@ async def search_literature(
         else:
             mcp_client = MCPClient()
             for srv in get_domain_pack(domain):
-                mcp_client.register(MCPServerInfo(
-                    name=srv.name,
-                    url=srv.url,
-                    description=srv.description,
-                    domain=srv.domain,
-                    api_base=srv.api_base,
-                ))
+                mcp_client.register(
+                    MCPServerInfo(
+                        name=srv.name,
+                        url=srv.url,
+                        description=srv.description,
+                        domain=srv.domain,
+                        api_base=srv.api_base,
+                    )
+                )
 
         all_papers: list[dict[str, Any]] = []
         servers_searched = []
@@ -758,13 +752,15 @@ async def query_data_source(
         else:
             mcp_client = MCPClient()
             for srv in get_domain_pack(domain):
-                mcp_client.register(MCPServerInfo(
-                    name=srv.name,
-                    url=srv.url,
-                    description=srv.description,
-                    domain=srv.domain,
-                    api_base=srv.api_base,
-                ))
+                mcp_client.register(
+                    MCPServerInfo(
+                        name=srv.name,
+                        url=srv.url,
+                        description=srv.description,
+                        domain=srv.domain,
+                        api_base=srv.api_base,
+                    )
+                )
 
         # Check server exists
         known = {s.name for s in mcp_client.get_servers()}
@@ -875,6 +871,7 @@ async def run_analysis_step(
 
         # We need a minimal plan with just this step
         from apollobot.agents.planner import ResearchPlan
+
         mini_plan = active.plan or ResearchPlan(
             mission_id=active.session_id,
             analysis_steps=[step],
@@ -885,6 +882,7 @@ async def run_analysis_step(
         mini_plan.analysis_steps = [step]
 
         from apollobot.agents.executor import ResearchExecutor
+
         executor = ResearchExecutor(
             llm=active.orchestrator.llm,
             mcp=active.orchestrator.mcp,
@@ -929,7 +927,14 @@ async def draft_section(
     active: ActiveSession = result
 
     try:
-        valid_sections = ["abstract", "introduction", "methods", "results", "discussion", "conclusion"]
+        valid_sections = [
+            "abstract",
+            "introduction",
+            "methods",
+            "results",
+            "discussion",
+            "conclusion",
+        ]
         if section not in valid_sections:
             return error_response(
                 INVALID_INPUT,
@@ -937,6 +942,7 @@ async def draft_section(
             )
 
         from apollobot.agents.executor import ResearchExecutor
+
         executor = ResearchExecutor(
             llm=active.orchestrator.llm,
             mcp=active.orchestrator.mcp,
@@ -963,15 +969,20 @@ async def draft_section(
         approach = plan.approach if plan else active.mission.objective
 
         resp = await active.orchestrator.llm.complete(
-            messages=[{"role": "user", "content": (
-                f"Write the {section.upper()} section of a scientific paper.\n\n"
-                f"Research objective: {active.session.mission.objective}\n"
-                f"Domain: {active.session.mission.domain}\n"
-                f"Approach: {approach}\n\n"
-                f"DATA INVENTORY (ground truth):\n{data_inventory}\n\n"
-                f"Evidence level: {evidence_level}\n"
-                "Write in clear, precise scientific prose."
-            )}],
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        f"Write the {section.upper()} section of a scientific paper.\n\n"
+                        f"Research objective: {active.session.mission.objective}\n"
+                        f"Domain: {active.session.mission.domain}\n"
+                        f"Approach: {approach}\n\n"
+                        f"DATA INVENTORY (ground truth):\n{data_inventory}\n\n"
+                        f"Evidence level: {evidence_level}\n"
+                        "Write in clear, precise scientific prose."
+                    ),
+                }
+            ],
             system=(
                 "You are writing a scientific paper. "
                 "NEVER invent data not in the inventory. "
@@ -979,9 +990,7 @@ async def draft_section(
             ),
         )
 
-        active.session.cost.record_llm_call(
-            resp.input_tokens, resp.output_tokens, resp.cost_usd
-        )
+        active.session.cost.record_llm_call(resp.input_tokens, resp.output_tokens, resp.cost_usd)
 
         return {
             "section": section,
@@ -1019,6 +1028,7 @@ async def review_manuscript(ctx: Any, session_id: str) -> dict[str, Any]:
             )
 
         from apollobot.agents.executor import ResearchExecutor
+
         executor = ResearchExecutor(
             llm=active.orchestrator.llm,
             mcp=active.orchestrator.mcp,

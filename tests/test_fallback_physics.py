@@ -79,6 +79,7 @@ CERN_JSON = {
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _mock_http(responses: dict[str, httpx.Response]):
     async def _get(url, params=None, **kwargs):
         for key, resp in responses.items():
@@ -93,6 +94,7 @@ def _mock_http(responses: dict[str, httpx.Response]):
 
 def _response(text: str = "", json_data: dict | list | None = None, status: int = 200):
     import json as _json
+
     resp = httpx.Response(status_code=status, request=httpx.Request("GET", "http://test"))
     if json_data is not None:
         resp._content = _json.dumps(json_data).encode()
@@ -105,13 +107,16 @@ def _response(text: str = "", json_data: dict | list | None = None, status: int 
 # Materials Project tests
 # ---------------------------------------------------------------------------
 
+
 class TestMaterialsProjectFallback:
     @pytest.mark.asyncio
     @patch.dict(os.environ, {"MP_API_KEY": "test-key-123"})
     async def test_basic_search(self):
-        http = _mock_http({
-            "materials/summary": _response(json_data=MP_JSON),
-        })
+        http = _mock_http(
+            {
+                "materials/summary": _response(json_data=MP_JSON),
+            }
+        )
         result = await _materials_project_search(
             "https://api.materialsproject.org",
             {"query": "Fe2O3"},
@@ -127,9 +132,11 @@ class TestMaterialsProjectFallback:
     @pytest.mark.asyncio
     @patch.dict(os.environ, {"MP_API_KEY": "test-key-123"})
     async def test_empty_results(self):
-        http = _mock_http({
-            "materials/summary": _response(json_data={"data": []}),
-        })
+        http = _mock_http(
+            {
+                "materials/summary": _response(json_data={"data": []}),
+            }
+        )
         result = await _materials_project_search(
             "https://api.materialsproject.org",
             {"query": "zzzzz"},
@@ -155,9 +162,11 @@ class TestMaterialsProjectFallback:
     @patch.dict(os.environ, {"MP_API_KEY": "test-key-123"})
     async def test_missing_fields(self):
         data = {"data": [{"material_id": "mp-1"}]}
-        http = _mock_http({
-            "materials/summary": _response(json_data=data),
-        })
+        http = _mock_http(
+            {
+                "materials/summary": _response(json_data=data),
+            }
+        )
         result = await _materials_project_search(
             "https://api.materialsproject.org",
             {"query": "test"},
@@ -171,12 +180,15 @@ class TestMaterialsProjectFallback:
 # NIST tests
 # ---------------------------------------------------------------------------
 
+
 class TestNistFallback:
     @pytest.mark.asyncio
     async def test_basic_search(self):
-        http = _mock_http({
-            "Value": _response(text=NIST_TEXT),
-        })
+        http = _mock_http(
+            {
+                "Value": _response(text=NIST_TEXT),
+            }
+        )
         result = await _nist_search(
             "https://physics.nist.gov/cgi-bin/cuu",
             {"query": "speed of light"},
@@ -191,9 +203,11 @@ class TestNistFallback:
 
     @pytest.mark.asyncio
     async def test_empty_results(self):
-        http = _mock_http({
-            "Value": _response(text=NIST_EMPTY),
-        })
+        http = _mock_http(
+            {
+                "Value": _response(text=NIST_EMPTY),
+            }
+        )
         result = await _nist_search(
             "https://physics.nist.gov/cgi-bin/cuu",
             {"query": "zzzzz"},
@@ -204,9 +218,11 @@ class TestNistFallback:
 
     @pytest.mark.asyncio
     async def test_non_200(self):
-        http = _mock_http({
-            "Value": _response(status=500),
-        })
+        http = _mock_http(
+            {
+                "Value": _response(status=500),
+            }
+        )
         result = await _nist_search(
             "https://physics.nist.gov/cgi-bin/cuu",
             {"query": "test"},
@@ -219,12 +235,15 @@ class TestNistFallback:
 # CERN Open Data tests
 # ---------------------------------------------------------------------------
 
+
 class TestCernOpendataFallback:
     @pytest.mark.asyncio
     async def test_basic_search(self):
-        http = _mock_http({
-            "records": _response(json_data=CERN_JSON),
-        })
+        http = _mock_http(
+            {
+                "records": _response(json_data=CERN_JSON),
+            }
+        )
         result = await _cern_opendata_search(
             "https://opendata.cern.ch/api",
             {"query": "Higgs"},
@@ -241,9 +260,11 @@ class TestCernOpendataFallback:
 
     @pytest.mark.asyncio
     async def test_empty_results(self):
-        http = _mock_http({
-            "records": _response(json_data={"hits": {"hits": []}}, status=200),
-        })
+        http = _mock_http(
+            {
+                "records": _response(json_data={"hits": {"hits": []}}, status=200),
+            }
+        )
         result = await _cern_opendata_search(
             "https://opendata.cern.ch/api",
             {"query": "zzzzz"},
@@ -253,9 +274,11 @@ class TestCernOpendataFallback:
 
     @pytest.mark.asyncio
     async def test_missing_fields(self):
-        http = _mock_http({
-            "records": _response(json_data=CERN_JSON),
-        })
+        http = _mock_http(
+            {
+                "records": _response(json_data=CERN_JSON),
+            }
+        )
         result = await _cern_opendata_search(
             "https://opendata.cern.ch/api",
             {"query": "test"},

@@ -20,22 +20,24 @@ class TestCommercializer:
     def mock_llm(self):
         llm = MagicMock()
         response = MagicMock()
-        response.text = json.dumps({
-            "total_addressable_market": "$5B",
-            "serviceable_market": "$500M",
-            "segments": [
-                {
-                    "name": "Pharma R&D",
-                    "size_estimate": "$2B",
-                    "growth_rate": "12%",
-                    "key_players": ["Pfizer", "Roche"],
-                    "entry_barriers": ["Regulatory"],
-                },
-            ],
-            "competitive_landscape": "Fragmented market",
-            "differentiation": ["AI-powered", "Provenance-based"],
-            "pricing_strategy": "SaaS subscription",
-        })
+        response.text = json.dumps(
+            {
+                "total_addressable_market": "$5B",
+                "serviceable_market": "$500M",
+                "segments": [
+                    {
+                        "name": "Pharma R&D",
+                        "size_estimate": "$2B",
+                        "growth_rate": "12%",
+                        "key_players": ["Pfizer", "Roche"],
+                        "entry_barriers": ["Regulatory"],
+                    },
+                ],
+                "competitive_landscape": "Fragmented market",
+                "differentiation": ["AI-powered", "Provenance-based"],
+                "pricing_strategy": "SaaS subscription",
+            }
+        )
         response.provider = "anthropic"
         response.model = "claude-sonnet"
         response.input_tokens = 100
@@ -123,14 +125,16 @@ class TestCommercializer:
         """Test that GTM phase creates launch plan."""
         from apollobot.agents.commercializer import CommercializationReport
 
-        mock_llm.complete.return_value.text = json.dumps({
-            "launch_timeline": "Q1 2025 beta, Q3 2025 GA",
-            "revenue_projections": {"year_1": "$100K", "year_2": "$500K"},
-            "channels": ["Direct sales", "Partner channel"],
-            "partnerships": ["Academic institutions"],
-            "regulatory": ["FDA clearance needed"],
-            "milestones": ["Beta launch", "First enterprise customer"],
-        })
+        mock_llm.complete.return_value.text = json.dumps(
+            {
+                "launch_timeline": "Q1 2025 beta, Q3 2025 GA",
+                "revenue_projections": {"year_1": "$100K", "year_2": "$500K"},
+                "channels": ["Direct sales", "Partner channel"],
+                "partnerships": ["Academic institutions"],
+                "regulatory": ["FDA clearance needed"],
+                "milestones": ["Beta launch", "First enterprise customer"],
+            }
+        )
 
         report = CommercializationReport()
         report.market_analysis = MarketAnalysis(

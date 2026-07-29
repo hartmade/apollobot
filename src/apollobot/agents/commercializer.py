@@ -83,9 +83,13 @@ class Commercializer:
                 session.complete_phase(phase, summary=summary, findings=findings)
             except Exception as e:
                 session.fail_phase(phase, str(e))
-                self.provenance.log_event("commercialize_phase_error", {
-                    "phase": phase.value, "error": str(e),
-                })
+                self.provenance.log_event(
+                    "commercialize_phase_error",
+                    {
+                        "phase": phase.value,
+                        "error": str(e),
+                    },
+                )
                 continue
 
             session.save_state()
@@ -116,31 +120,34 @@ class Commercializer:
         assessment = tr.assessment_summary if tr else ""
 
         resp = await self.llm.complete(
-            messages=[{"role": "user", "content": (
-                f"Conduct a market analysis for:\n\n"
-                f"Product: {spec_title}\n"
-                f"Description: {spec_desc}\n"
-                f"Assessment: {assessment}\n\n"
-                "Analyze:\n"
-                "1. Total addressable market (TAM) and serviceable market (SAM)\n"
-                "2. Market segments with size estimates and growth rates\n"
-                "3. Key players and competitive landscape\n"
-                "4. Entry barriers\n"
-                "5. Differentiation opportunities\n"
-                "6. Pricing strategy recommendations\n\n"
-                "Respond in JSON: {total_addressable_market, serviceable_market, "
-                "segments: [{name, size_estimate, growth_rate, key_players, entry_barriers}], "
-                "competitive_landscape, differentiation (list), pricing_strategy}"
-            )}],
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        f"Conduct a market analysis for:\n\n"
+                        f"Product: {spec_title}\n"
+                        f"Description: {spec_desc}\n"
+                        f"Assessment: {assessment}\n\n"
+                        "Analyze:\n"
+                        "1. Total addressable market (TAM) and serviceable market (SAM)\n"
+                        "2. Market segments with size estimates and growth rates\n"
+                        "3. Key players and competitive landscape\n"
+                        "4. Entry barriers\n"
+                        "5. Differentiation opportunities\n"
+                        "6. Pricing strategy recommendations\n\n"
+                        "Respond in JSON: {total_addressable_market, serviceable_market, "
+                        "segments: [{name, size_estimate, growth_rate, key_players, entry_barriers}], "
+                        "competitive_landscape, differentiation (list), pricing_strategy}"
+                    ),
+                }
+            ],
             system=(
                 "You are a market analyst specializing in technology products "
                 "derived from scientific research. Provide evidence-based market sizing."
             ),
         )
 
-        session.cost.record_llm_call(
-            resp.input_tokens, resp.output_tokens, resp.cost_usd
-        )
+        session.cost.record_llm_call(resp.input_tokens, resp.output_tokens, resp.cost_usd)
 
         try:
             data = json.loads(self._extract_json(resp.text))
@@ -185,29 +192,32 @@ class Commercializer:
         ip_landscape = tr.ip_landscape if tr else None
 
         resp = await self.llm.complete(
-            messages=[{"role": "user", "content": (
-                f"Develop an IP strategy for:\n\n"
-                f"Product: {tr.implementation_spec.title if tr else session.mission.objective}\n"
-                f"FTO: {ip_landscape.freedom_to_operate if ip_landscape else 'unknown'}\n"
-                f"Prior art: {ip_landscape.prior_art_summary if ip_landscape else 'not analyzed'}\n"
-                f"Patentability: {ip_landscape.patentability_assessment if ip_landscape else 'unknown'}\n\n"
-                "Recommend:\n"
-                "1. Patent filing strategy (what to patent, when, where)\n"
-                "2. Trade secret vs. patent decision framework\n"
-                "3. Licensing approach (exclusive, non-exclusive, FRAND)\n"
-                "4. Defensive publications if needed\n"
-                "5. Freedom to operate risk mitigation\n"
-                "6. Estimated IP costs and timeline"
-            )}],
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        f"Develop an IP strategy for:\n\n"
+                        f"Product: {tr.implementation_spec.title if tr else session.mission.objective}\n"
+                        f"FTO: {ip_landscape.freedom_to_operate if ip_landscape else 'unknown'}\n"
+                        f"Prior art: {ip_landscape.prior_art_summary if ip_landscape else 'not analyzed'}\n"
+                        f"Patentability: {ip_landscape.patentability_assessment if ip_landscape else 'unknown'}\n\n"
+                        "Recommend:\n"
+                        "1. Patent filing strategy (what to patent, when, where)\n"
+                        "2. Trade secret vs. patent decision framework\n"
+                        "3. Licensing approach (exclusive, non-exclusive, FRAND)\n"
+                        "4. Defensive publications if needed\n"
+                        "5. Freedom to operate risk mitigation\n"
+                        "6. Estimated IP costs and timeline"
+                    ),
+                }
+            ],
             system=(
                 "You are an IP strategy consultant for technology companies. "
                 "Provide actionable IP recommendations."
             ),
         )
 
-        session.cost.record_llm_call(
-            resp.input_tokens, resp.output_tokens, resp.cost_usd
-        )
+        session.cost.record_llm_call(resp.input_tokens, resp.output_tokens, resp.cost_usd)
 
         report.ip_strategy = resp.text
 
@@ -229,34 +239,37 @@ class Commercializer:
         market = report.market_analysis
 
         resp = await self.llm.complete(
-            messages=[{"role": "user", "content": (
-                f"Create a go-to-market plan for:\n\n"
-                f"Product: {tr.implementation_spec.title if tr else session.mission.objective}\n"
-                f"TAM: {market.total_addressable_market}\n"
-                f"Pricing: {market.pricing_strategy}\n"
-                f"Segments: {', '.join(s.name for s in market.segments[:5])}\n"
-                f"Differentiation: {', '.join(market.differentiation[:5])}\n\n"
-                "Plan should include:\n"
-                "1. Launch timeline (phases)\n"
-                "2. Revenue projections (Year 1-3)\n"
-                "3. Sales channels\n"
-                "4. Marketing strategy\n"
-                "5. Partnership opportunities\n"
-                "6. Regulatory considerations\n"
-                "7. Key metrics and milestones\n\n"
-                "Respond in JSON: {launch_timeline, revenue_projections: "
-                "{year_1, year_2, year_3}, channels (list), "
-                "partnerships (list), regulatory (list), milestones (list)}"
-            )}],
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        f"Create a go-to-market plan for:\n\n"
+                        f"Product: {tr.implementation_spec.title if tr else session.mission.objective}\n"
+                        f"TAM: {market.total_addressable_market}\n"
+                        f"Pricing: {market.pricing_strategy}\n"
+                        f"Segments: {', '.join(s.name for s in market.segments[:5])}\n"
+                        f"Differentiation: {', '.join(market.differentiation[:5])}\n\n"
+                        "Plan should include:\n"
+                        "1. Launch timeline (phases)\n"
+                        "2. Revenue projections (Year 1-3)\n"
+                        "3. Sales channels\n"
+                        "4. Marketing strategy\n"
+                        "5. Partnership opportunities\n"
+                        "6. Regulatory considerations\n"
+                        "7. Key metrics and milestones\n\n"
+                        "Respond in JSON: {launch_timeline, revenue_projections: "
+                        "{year_1, year_2, year_3}, channels (list), "
+                        "partnerships (list), regulatory (list), milestones (list)}"
+                    ),
+                }
+            ],
             system=(
                 "You are a GTM strategist for deep-tech products. "
                 "Create realistic, phased go-to-market plans."
             ),
         )
 
-        session.cost.record_llm_call(
-            resp.input_tokens, resp.output_tokens, resp.cost_usd
-        )
+        session.cost.record_llm_call(resp.input_tokens, resp.output_tokens, resp.cost_usd)
 
         try:
             data = json.loads(self._extract_json(resp.text))
@@ -286,12 +299,8 @@ class Commercializer:
         (report_dir / "market_analysis.json").write_text(
             report.market_analysis.model_dump_json(indent=2)
         )
-        (report_dir / "ip_strategy.md").write_text(
-            f"# IP Strategy\n\n{report.ip_strategy}"
-        )
-        (report_dir / "go_to_market.md").write_text(
-            f"# Go-to-Market Plan\n\n{report.go_to_market}"
-        )
+        (report_dir / "ip_strategy.md").write_text(f"# IP Strategy\n\n{report.ip_strategy}")
+        (report_dir / "go_to_market.md").write_text(f"# Go-to-Market Plan\n\n{report.go_to_market}")
         if report.revenue_projections:
             (report_dir / "revenue_projections.json").write_text(
                 json.dumps(report.revenue_projections, indent=2)

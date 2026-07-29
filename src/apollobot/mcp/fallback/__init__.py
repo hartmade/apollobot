@@ -23,6 +23,16 @@ from ._bioinformatics import HANDLERS as _bio_handlers
 from ._comp_chem import HANDLERS as _chem_handlers
 from ._physics import HANDLERS as _phys_handlers
 from ._economics import HANDLERS as _econ_handlers
+from ._geology import HANDLERS as _geo_handlers
+from ._materials import HANDLERS as _mat_handlers
+from ._psychology import HANDLERS as _psych_handlers
+from ._mathematics import HANDLERS as _math_handlers
+from ._social_science import HANDLERS as _socsci_handlers
+from ._astronomy import HANDLERS as _astro_handlers
+from ._climate import HANDLERS as _climate_handlers
+from ._neuroscience import HANDLERS as _neuro_handlers
+from ._epidemiology import HANDLERS as _epi_handlers
+from ._ecology import HANDLERS as _eco_handlers
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +45,16 @@ for _handlers in (
     _chem_handlers,
     _phys_handlers,
     _econ_handlers,
+    _geo_handlers,
+    _mat_handlers,
+    _psych_handlers,
+    _math_handlers,
+    _socsci_handlers,
+    _astro_handlers,
+    _climate_handlers,
+    _neuro_handlers,
+    _epi_handlers,
+    _eco_handlers,
 ):
     _FALLBACK_HANDLERS.update(_handlers)
 

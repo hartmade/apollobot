@@ -45,6 +45,4 @@ class NotificationEvent(BaseModel):
     summary: str
     details: dict[str, Any] = Field(default_factory=dict)
     requires_response: bool = False
-    timestamp: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())

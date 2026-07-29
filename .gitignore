@@ -7,6 +7,7 @@ dist/
 build/
 *.egg
 .eggs/
+node_modules/
 
 # Virtual environments
 .venv/
@@ -33,6 +34,8 @@ htmlcov/
 # Environment
 .env
 .env.local
+test-config.yaml
+.apollobot/
 
 # Session data
 sessions/

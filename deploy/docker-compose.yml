@@ -1,0 +1,86 @@
+name: frontier-science-apollo
+
+services:
+  apollobot:
+    image: ${APOLLOBOT_SERVICE_IMAGE:?Set APOLLOBOT_SERVICE_IMAGE to an immutable release tag}
+    build:
+      context: ..
+      dockerfile: deploy/service/Dockerfile
+      args:
+        APOLLOBOT_UID: ${APOLLOBOT_UID:-10001}
+        APOLLOBOT_GID: ${APOLLOBOT_GID:-10001}
+        APOLLOBOT_RELEASE_SHA: ${APOLLOBOT_RELEASE_SHA:?Set APOLLOBOT_RELEASE_SHA to the release commit}
+    init: true
+    restart: unless-stopped
+    user: "${APOLLOBOT_UID:-10001}:${APOLLOBOT_GID:-10001}"
+    group_add:
+      - "${DOCKER_GID:?Set DOCKER_GID to the group that owns the Docker socket}"
+    environment:
+      APOLLOBOT_ENV: production
+      APOLLOBOT_API_HOST: 0.0.0.0
+      APOLLOBOT_API_PORT: 8765
+      APOLLOBOT_SERVICE_DB: ${APOLLOBOT_DATA_DIR:?Set APOLLOBOT_DATA_DIR to an absolute host path}/service.db
+      APOLLOBOT_OUTPUT_DIR: ${APOLLOBOT_DATA_DIR:?Set APOLLOBOT_DATA_DIR to an absolute host path}/output
+      APOLLOBOT_SANDBOX_MODE: container
+      APOLLOBOT_SANDBOX_IMAGE: ${APOLLOBOT_SANDBOX_IMAGE:?Set APOLLOBOT_SANDBOX_IMAGE to the matching immutable release tag}
+      APOLLOBOT_SANDBOX_NETWORK: "off"
+      APOLLOBOT_ALLOW_LOCAL_EXECUTION: "0"
+      APOLLOBOT_SERVICE_TOKEN: ${APOLLOBOT_SERVICE_TOKEN:?Set a random service token}
+      APOLLOBOT_WEBHOOK_SECRET: ${APOLLOBOT_WEBHOOK_SECRET:?Set the shared webhook secret}
+      FRONTIER_PLATFORM_URL: ${FRONTIER_PLATFORM_URL:?Set the HTTPS platform URL}
+      APOLLOBOT_ALLOWED_ORIGIN: ${APOLLOBOT_ALLOWED_ORIGIN:-}
+      APOLLOBOT_CONTACT_EMAIL: ${APOLLOBOT_CONTACT_EMAIL:-}
+      APOLLOBOT_MCP_PROXY_URL: ${APOLLOBOT_MCP_PROXY_URL:-}
+      APOLLOBOT_MODEL_PROVIDER: ${APOLLOBOT_MODEL_PROVIDER:-anthropic}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
+      MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}
+      APOLLOBOT_DEFAULT_DOMAIN: ${APOLLOBOT_DEFAULT_DOMAIN:-}
+      APOLLOBOT_DEFAULT_MODE: ${APOLLOBOT_DEFAULT_MODE:-}
+      APOLLOBOT_SANDBOX_MEMORY_MB: ${APOLLOBOT_SANDBOX_MEMORY_MB:-2048}
+      APOLLOBOT_SANDBOX_CPUS: ${APOLLOBOT_SANDBOX_CPUS:-2}
+      APOLLOBOT_SANDBOX_PIDS: ${APOLLOBOT_SANDBOX_PIDS:-256}
+      APOLLOBOT_SANDBOX_OUTPUT_BYTES: ${APOLLOBOT_SANDBOX_OUTPUT_BYTES:-2000000}
+      APOLLOBOT_MAX_CONCURRENT_JOBS: ${APOLLOBOT_MAX_CONCURRENT_JOBS:-3}
+      APOLLOBOT_MAX_CONCURRENT_PLANS: ${APOLLOBOT_MAX_CONCURRENT_PLANS:-3}
+      DOCKER_HOST: unix:///var/run/docker.sock
+      HOME: /home/apollobot
+    ports:
+      - "${APOLLOBOT_BIND_ADDRESS:-127.0.0.1}:${APOLLOBOT_PORT:-8765}:8765"
+    volumes:
+      # The path must be identical inside and outside this container. The
+      # sibling sandbox containers receive host-side bind mounts from it.
+      - "${APOLLOBOT_DATA_DIR:?Set APOLLOBOT_DATA_DIR to an absolute host path}:${APOLLOBOT_DATA_DIR}"
+      - "${APOLLOBOT_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+  sandbox-image:
+    image: ${APOLLOBOT_SANDBOX_IMAGE:?Set APOLLOBOT_SANDBOX_IMAGE to the matching immutable release tag}
+    build:
+      context: ..
+      dockerfile: deploy/sandbox/Dockerfile
+      args:
+        APOLLOBOT_RELEASE_SHA: ${APOLLOBOT_RELEASE_SHA:?Set APOLLOBOT_RELEASE_SHA to the release commit}
+    profiles:
+      - images
+    command: ["python", "-c", "print('ApolloBot sandbox image is ready')"]
+    network_mode: none
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true

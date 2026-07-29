@@ -11,10 +11,8 @@ Each MCP server exposes a standard interface:
 
 from __future__ import annotations
 
-import asyncio
-import json
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 
@@ -66,14 +64,16 @@ class MCPClient:
 
     def register_from_config(self, config: dict[str, Any]) -> None:
         """Register a server from a config dict (e.g. from servers.yaml)."""
-        self.register(MCPServerInfo(
-            name=config["name"],
-            url=config["url"],
-            description=config.get("description", ""),
-            domain=config.get("domain", ""),
-            auth_type=config.get("auth", "none"),
-            auth_token=config.get("token", ""),
-        ))
+        self.register(
+            MCPServerInfo(
+                name=config["name"],
+                url=config["url"],
+                description=config.get("description", ""),
+                domain=config.get("domain", ""),
+                auth_type=config.get("auth", "none"),
+                auth_token=config.get("token", ""),
+            )
+        )
 
     def get_servers(self, domain: str | None = None) -> list[MCPServerInfo]:
         """List registered servers, optionally filtered by domain."""
@@ -92,16 +92,29 @@ class MCPClient:
         Returns a list of MCPCapability objects.
         """
         server = self._get_server(server_name)
+        if not server.url and server.api_base:
+            capabilities = [
+                MCPCapability(
+                    name="query",
+                    description=f"Query {server.description or server.name} directly",
+                    category="data",
+                )
+            ]
+            server.capabilities = capabilities
+            server.healthy = True
+            return capabilities
         resp = await self._request(server, "discover", {})
 
         capabilities = []
         for cap in resp.get("capabilities", []):
-            capabilities.append(MCPCapability(
-                name=cap["name"],
-                description=cap.get("description", ""),
-                parameters=cap.get("parameters", {}),
-                category=cap.get("category", ""),
-            ))
+            capabilities.append(
+                MCPCapability(
+                    name=cap["name"],
+                    description=cap.get("description", ""),
+                    parameters=cap.get("parameters", {}),
+                    category=cap.get("category", ""),
+                )
+            )
         server.capabilities = capabilities
         server.healthy = True
         return capabilities
@@ -117,10 +130,14 @@ class MCPClient:
         Returns the query result.
         """
         server = self._get_server(server_name)
-        return await self._request(server, "query", {
-            "capability": capability,
-            "parameters": parameters or {},
-        })
+        return await self._request(
+            server,
+            "query",
+            {
+                "capability": capability,
+                "parameters": parameters or {},
+            },
+        )
 
     async def status(self, server_name: str, job_id: str) -> dict[str, Any]:
         """Check status of a running job."""
@@ -144,7 +161,7 @@ class MCPClient:
         for name, task in tasks.items():
             try:
                 results[name] = await task
-            except Exception as e:
+            except Exception:
                 results[name] = []
                 self._servers[name].healthy = False
         return results
@@ -161,10 +178,7 @@ class MCPClient:
         query_lower = query.lower()
         for server_name, caps in all_caps.items():
             for cap in caps:
-                if (
-                    query_lower in cap.name.lower()
-                    or query_lower in cap.description.lower()
-                ):
+                if query_lower in cap.name.lower() or query_lower in cap.description.lower():
                     matches.append((server_name, cap))
         return matches
 
@@ -176,6 +190,13 @@ class MCPClient:
         """Check if a server is reachable and responding."""
         try:
             server = self._get_server(server_name)
+            if not server.url:
+                if not server.api_base:
+                    server.healthy = False
+                    return False
+                resp = await self._http.get(server.api_base)
+                server.healthy = resp.status_code < 500
+                return server.healthy
             resp = await self._http.get(
                 f"{server.url}/health",
                 headers=self._auth_headers(server),
@@ -207,6 +228,13 @@ class MCPClient:
         self, server: MCPServerInfo, method: str, payload: dict[str, Any]
     ) -> dict[str, Any]:
         """Send a request to an MCP server, falling back to direct API if proxy is down."""
+        if not server.url:
+            if method != "query" or not server.api_base:
+                raise RuntimeError(
+                    f"MCP server '{server.name}' requires a proxy for method '{method}'"
+                )
+            return await self._fallback_request(server, payload)
+
         try:
             resp = await self._http.post(
                 f"{server.url}/{method}",
@@ -218,19 +246,28 @@ class MCPClient:
         except Exception as exc:
             # Fallback to direct API for any connection failure (SSL, DNS,
             # timeout, HTTP errors, etc.) when an api_base is configured.
-            if server.api_base:
-                from apollobot.mcp.fallback import fallback_query
+            if method == "query" and server.api_base:
                 try:
-                    return await fallback_query(
-                        server_name=server.name,
-                        api_base=server.api_base,
-                        params=payload.get("parameters", {}),
-                        http_client=self._http,
-                    )
+                    return await self._fallback_request(server, payload)
                 except ValueError:
                     # No fallback handler for this server — re-raise original
-                    raise exc
+                    raise exc from None
             raise
+
+    async def _fallback_request(
+        self,
+        server: MCPServerInfo,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Run a query through the connector's audited direct API adapter."""
+        from apollobot.mcp.fallback import fallback_query
+
+        return await fallback_query(
+            server_name=server.name,
+            api_base=server.api_base,
+            params=payload.get("parameters", {}),
+            http_client=self._http,
+        )
 
     async def close(self) -> None:
         await self._http.aclose()

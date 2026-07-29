@@ -165,9 +165,7 @@ class TranslationReport(BaseModel):
     source_session_id: str = ""
     source_paper_doi: str = ""
     status: TranslationStatus = TranslationStatus.PENDING
-    created_at: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     completed_at: str = ""
 
     # Scores from Discover self-review

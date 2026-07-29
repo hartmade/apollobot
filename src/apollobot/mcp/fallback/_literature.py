@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 # arXiv adapter
 # ---------------------------------------------------------------------------
 
+
 async def _arxiv_search(
     api_base: str,
     params: dict[str, Any],
@@ -46,7 +47,9 @@ async def _arxiv_search(
 
         title = title_el.text.strip() if title_el is not None and title_el.text else ""
         abstract = abstract_el.text.strip() if abstract_el is not None and abstract_el.text else ""
-        published = published_el.text.strip() if published_el is not None and published_el.text else ""
+        published = (
+            published_el.text.strip() if published_el is not None and published_el.text else ""
+        )
         arxiv_url = id_el.text.strip() if id_el is not None and id_el.text else ""
 
         year = int(published[:4]) if len(published) >= 4 else 0
@@ -62,14 +65,16 @@ async def _arxiv_search(
             if link.get("title") == "doi":
                 doi = link.get("href", "")
 
-        papers.append({
-            "title": title,
-            "abstract": abstract,
-            "year": year,
-            "doi": doi,
-            "arxiv_id": arxiv_id,
-            "source": "arxiv",
-        })
+        papers.append(
+            {
+                "title": title,
+                "abstract": abstract,
+                "year": year,
+                "doi": doi,
+                "arxiv_id": arxiv_id,
+                "source": "arxiv",
+            }
+        )
 
     logger.info("arXiv fallback: %d papers for query=%r", len(papers), query)
     return {"papers": papers}
@@ -78,6 +83,7 @@ async def _arxiv_search(
 # ---------------------------------------------------------------------------
 # Semantic Scholar adapter
 # ---------------------------------------------------------------------------
+
 
 async def _semantic_scholar_search(
     api_base: str,
@@ -105,14 +111,16 @@ async def _semantic_scholar_search(
     papers = []
     for item in data.get("data", []):
         ext_ids = item.get("externalIds") or {}
-        papers.append({
-            "title": item.get("title", ""),
-            "abstract": item.get("abstract", ""),
-            "year": item.get("year", 0) or 0,
-            "doi": ext_ids.get("DOI", ""),
-            "arxiv_id": ext_ids.get("ArXiv", ""),
-            "source": "semantic_scholar",
-        })
+        papers.append(
+            {
+                "title": item.get("title", ""),
+                "abstract": item.get("abstract", ""),
+                "year": item.get("year", 0) or 0,
+                "doi": ext_ids.get("DOI", ""),
+                "arxiv_id": ext_ids.get("ArXiv", ""),
+                "source": "semantic_scholar",
+            }
+        )
 
     logger.info("Semantic Scholar fallback: %d papers for query=%r", len(papers), query)
     return {"papers": papers}
@@ -121,6 +129,7 @@ async def _semantic_scholar_search(
 # ---------------------------------------------------------------------------
 # PubMed adapter (two-step: esearch → efetch)
 # ---------------------------------------------------------------------------
+
 
 async def _pubmed_search(
     api_base: str,
@@ -205,14 +214,16 @@ async def _pubmed_search(
         pmid_el = medline.find("PMID")
         pmid = pmid_el.text if pmid_el is not None and pmid_el.text else ""
 
-        papers.append({
-            "title": title,
-            "abstract": abstract,
-            "year": year,
-            "doi": doi,
-            "pmid": pmid,
-            "source": "pubmed",
-        })
+        papers.append(
+            {
+                "title": title,
+                "abstract": abstract,
+                "year": year,
+                "doi": doi,
+                "pmid": pmid,
+                "source": "pubmed",
+            }
+        )
 
     logger.info("PubMed fallback: %d papers for query=%r", len(papers), query)
     return {"papers": papers}

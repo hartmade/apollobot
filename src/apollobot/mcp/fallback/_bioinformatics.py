@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 # GEO (Gene Expression Omnibus) — via NCBI E-utils
 # ---------------------------------------------------------------------------
 
+
 async def _geo_search(
     api_base: str,
     params: dict[str, Any],
@@ -64,15 +65,17 @@ async def _geo_search(
         doc = result.get(uid, {})
         if not doc:
             continue
-        datasets.append({
-            "accession": doc.get("accession", ""),
-            "title": doc.get("title", ""),
-            "summary": doc.get("summary", ""),
-            "organism": doc.get("taxon", ""),
-            "platform": doc.get("gpl", ""),
-            "sample_count": safe_int(doc.get("n_samples", 0)),
-            "source": "geo",
-        })
+        datasets.append(
+            {
+                "accession": doc.get("accession", ""),
+                "title": doc.get("title", ""),
+                "summary": doc.get("summary", ""),
+                "organism": doc.get("taxon", ""),
+                "platform": doc.get("gpl", ""),
+                "sample_count": safe_int(doc.get("n_samples", 0)),
+                "source": "geo",
+            }
+        )
 
     logger.info("GEO fallback: %d datasets for query=%r", len(datasets), query)
     return {"datasets": datasets}
@@ -81,6 +84,7 @@ async def _geo_search(
 # ---------------------------------------------------------------------------
 # GenBank — via NCBI E-utils
 # ---------------------------------------------------------------------------
+
 
 async def _genbank_search(
     api_base: str,
@@ -125,14 +129,16 @@ async def _genbank_search(
         doc = result.get(uid, {})
         if not doc:
             continue
-        sequences.append({
-            "accession": doc.get("caption", doc.get("accessionversion", "")),
-            "title": doc.get("title", ""),
-            "organism": doc.get("organism", ""),
-            "length": safe_int(doc.get("slen", 0)),
-            "moltype": doc.get("moltype", ""),
-            "source": "genbank",
-        })
+        sequences.append(
+            {
+                "accession": doc.get("caption", doc.get("accessionversion", "")),
+                "title": doc.get("title", ""),
+                "organism": doc.get("organism", ""),
+                "length": safe_int(doc.get("slen", 0)),
+                "moltype": doc.get("moltype", ""),
+                "source": "genbank",
+            }
+        )
 
     logger.info("GenBank fallback: %d sequences for query=%r", len(sequences), query)
     return {"sequences": sequences}
@@ -141,6 +147,7 @@ async def _genbank_search(
 # ---------------------------------------------------------------------------
 # UniProt — REST API
 # ---------------------------------------------------------------------------
+
 
 async def _uniprot_search(
     api_base: str,
@@ -185,14 +192,16 @@ async def _uniprot_search(
             if name:
                 gene_names.append(name)
 
-        proteins.append({
-            "accession": entry.get("primaryAccession", ""),
-            "protein_name": protein_name,
-            "organism": organism,
-            "gene_names": gene_names,
-            "length": safe_int(entry.get("sequence", {}).get("length", 0)),
-            "source": "uniprot",
-        })
+        proteins.append(
+            {
+                "accession": entry.get("primaryAccession", ""),
+                "protein_name": protein_name,
+                "organism": organism,
+                "gene_names": gene_names,
+                "length": safe_int(entry.get("sequence", {}).get("length", 0)),
+                "source": "uniprot",
+            }
+        )
 
     logger.info("UniProt fallback: %d proteins for query=%r", len(proteins), query)
     return {"proteins": proteins}
@@ -201,6 +210,7 @@ async def _uniprot_search(
 # ---------------------------------------------------------------------------
 # Ensembl — REST API
 # ---------------------------------------------------------------------------
+
 
 async def _ensembl_search(
     api_base: str,
@@ -230,14 +240,16 @@ async def _ensembl_search(
         if not ens_id or ens_id in seen_ids:
             continue
         seen_ids.add(ens_id)
-        genes.append({
-            "id": ens_id,
-            "display_name": query,
-            "description": xref.get("description", ""),
-            "biotype": xref.get("type", ""),
-            "species": species,
-            "source": "ensembl",
-        })
+        genes.append(
+            {
+                "id": ens_id,
+                "display_name": query,
+                "description": xref.get("description", ""),
+                "biotype": xref.get("type", ""),
+                "species": species,
+                "source": "ensembl",
+            }
+        )
 
     logger.info("Ensembl fallback: %d genes for query=%r", len(genes), query)
     return {"genes": genes}
@@ -246,6 +258,7 @@ async def _ensembl_search(
 # ---------------------------------------------------------------------------
 # KEGG — REST API (tab-delimited text)
 # ---------------------------------------------------------------------------
+
 
 async def _kegg_search(
     api_base: str,
@@ -273,11 +286,13 @@ async def _kegg_search(
                 if line.startswith("NAME"):
                     name = line.split(None, 1)[1].strip() if len(line.split(None, 1)) > 1 else ""
                     break
-            entries.append({
-                "id": pid,
-                "description": name,
-                "source": "kegg",
-            })
+            entries.append(
+                {
+                    "id": pid,
+                    "description": name,
+                    "source": "kegg",
+                }
+            )
         logger.info("KEGG fallback: %d entries from pathway_list", len(entries))
         return {"entries": entries}
 
@@ -299,11 +314,13 @@ async def _kegg_search(
         parts = line.split("\t", 1)
         entry_id = parts[0].strip()
         description = parts[1].strip() if len(parts) > 1 else ""
-        entries.append({
-            "id": entry_id,
-            "description": description,
-            "source": "kegg",
-        })
+        entries.append(
+            {
+                "id": entry_id,
+                "description": description,
+                "source": "kegg",
+            }
+        )
 
     logger.info("KEGG fallback: %d entries for query=%r", len(entries), query)
     return {"entries": entries}
@@ -312,6 +329,7 @@ async def _kegg_search(
 # ---------------------------------------------------------------------------
 # PDB (Protein Data Bank) — RCSB REST API
 # ---------------------------------------------------------------------------
+
 
 async def _pdb_search(
     api_base: str,
@@ -375,14 +393,16 @@ async def _pdb_search(
             if isinstance(resolution, list) and resolution:
                 resolution = resolution[0]
 
-        structures.append({
-            "pdb_id": pdb_id,
-            "title": struct.get("title", ""),
-            "organism": organism,
-            "method": exptl[0].get("method", "") if exptl else "",
-            "resolution": resolution,
-            "source": "pdb",
-        })
+        structures.append(
+            {
+                "pdb_id": pdb_id,
+                "title": struct.get("title", ""),
+                "organism": organism,
+                "method": exptl[0].get("method", "") if exptl else "",
+                "resolution": resolution,
+                "source": "pdb",
+            }
+        )
 
     logger.info("PDB fallback: %d structures for query=%r", len(structures), query)
     return {"structures": structures}

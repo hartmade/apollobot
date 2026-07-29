@@ -9,13 +9,17 @@ Provides:
 
 from __future__ import annotations
 
+import logging
+import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field
 
 from apollobot.notifications.config import NotificationsConfig
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -58,6 +62,11 @@ class APIConfig(BaseModel):
             return self.openai_api_key
         elif self.default_provider == "minimax":
             return self.minimax_api_key
+        elif (
+            self.default_provider == "acceptance"
+            and os.getenv("APOLLOBOT_ENV", "development").lower() == "acceptance"
+        ):
+            return "acceptance-fixture"
         return ""
 
 
@@ -69,10 +78,10 @@ class ComputeConfig(BaseModel):
 
 
 class JournalConfig(BaseModel):
-    """Configuration for posting reviews to the Frontier Science Journal API."""
+    """Legacy journal configuration retained for profile compatibility."""
 
     enabled: bool = False
-    base_url: str = "https://frontierscience.ai"
+    base_url: str = ""
     hmac_secret: str = ""
     timeout: float = 30.0
 
@@ -97,14 +106,34 @@ class ApolloConfig(BaseModel):
 
 
 def load_config() -> ApolloConfig:
-    """Load configuration from YAML file, or return defaults."""
+    """Load YAML configuration and overlay deploy-time environment secrets."""
+    config = ApolloConfig()
     if APOLLO_CONFIG_FILE.exists():
         try:
             data = yaml.safe_load(APOLLO_CONFIG_FILE.read_text())
-            return ApolloConfig(**data)
-        except Exception:
-            pass
-    return ApolloConfig()
+            config = ApolloConfig(**data)
+        except Exception as error:
+            logger.warning("Could not load ApolloBot config: %s", error)
+
+    api_updates = {
+        "default_provider": os.getenv("APOLLOBOT_MODEL_PROVIDER"),
+        "anthropic_api_key": os.getenv("ANTHROPIC_API_KEY"),
+        "openai_api_key": os.getenv("OPENAI_API_KEY"),
+        "minimax_api_key": os.getenv("MINIMAX_API_KEY"),
+    }
+    configured_api = config.api.model_dump()
+    configured_api.update({key: value for key, value in api_updates.items() if value})
+
+    config_updates: dict[str, Any] = {
+        "api": APIConfig(**configured_api),
+    }
+    environment_fields = {
+        "default_domain": os.getenv("APOLLOBOT_DEFAULT_DOMAIN"),
+        "default_mode": os.getenv("APOLLOBOT_DEFAULT_MODE"),
+        "output_dir": os.getenv("APOLLOBOT_OUTPUT_DIR"),
+    }
+    config_updates.update({key: value for key, value in environment_fields.items() if value})
+    return config.model_copy(update=config_updates)
 
 
 def save_config(config: ApolloConfig) -> None:
@@ -119,8 +148,8 @@ def load_custom_servers() -> list[dict[str, Any]]:
         try:
             data = yaml.safe_load(APOLLO_SERVERS_FILE.read_text())
             return data.get("custom_servers", [])
-        except Exception:
-            pass
+        except Exception as error:
+            logger.warning("Could not load ApolloBot server config: %s", error)
     return []
 
 

@@ -91,6 +91,7 @@ ZINC_JSON = {
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _mock_http(responses: dict[str, httpx.Response]):
     async def _get(url, params=None, **kwargs):
         for key, resp in responses.items():
@@ -105,6 +106,7 @@ def _mock_http(responses: dict[str, httpx.Response]):
 
 def _response(text: str = "", json_data: dict | list | None = None, status: int = 200):
     import json as _json
+
     resp = httpx.Response(status_code=status, request=httpx.Request("GET", "http://test"))
     if json_data is not None:
         resp._content = _json.dumps(json_data).encode()
@@ -117,12 +119,15 @@ def _response(text: str = "", json_data: dict | list | None = None, status: int 
 # PubChem tests
 # ---------------------------------------------------------------------------
 
+
 class TestPubchemFallback:
     @pytest.mark.asyncio
     async def test_basic_search(self):
-        http = _mock_http({
-            "compound/name/aspirin": _response(json_data=PUBCHEM_JSON),
-        })
+        http = _mock_http(
+            {
+                "compound/name/aspirin": _response(json_data=PUBCHEM_JSON),
+            }
+        )
         result = await _pubchem_search(
             "https://pubchem.ncbi.nlm.nih.gov/rest/pug",
             {"query": "aspirin"},
@@ -138,9 +143,11 @@ class TestPubchemFallback:
 
     @pytest.mark.asyncio
     async def test_empty_results(self):
-        http = _mock_http({
-            "compound/name/zzzzz": _response(status=404),
-        })
+        http = _mock_http(
+            {
+                "compound/name/zzzzz": _response(status=404),
+            }
+        )
         result = await _pubchem_search(
             "https://pubchem.ncbi.nlm.nih.gov/rest/pug",
             {"query": "zzzzz"},
@@ -151,9 +158,11 @@ class TestPubchemFallback:
     @pytest.mark.asyncio
     async def test_missing_fields(self):
         minimal = {"PC_Compounds": [{"id": {"id": {"cid": 999}}, "props": []}]}
-        http = _mock_http({
-            "compound/name/x": _response(json_data=minimal),
-        })
+        http = _mock_http(
+            {
+                "compound/name/x": _response(json_data=minimal),
+            }
+        )
         result = await _pubchem_search(
             "https://pubchem.ncbi.nlm.nih.gov/rest/pug",
             {"query": "x"},
@@ -167,12 +176,15 @@ class TestPubchemFallback:
 # ChEMBL tests
 # ---------------------------------------------------------------------------
 
+
 class TestChemblFallback:
     @pytest.mark.asyncio
     async def test_basic_search(self):
-        http = _mock_http({
-            "molecule/search": _response(json_data=CHEMBL_JSON),
-        })
+        http = _mock_http(
+            {
+                "molecule/search": _response(json_data=CHEMBL_JSON),
+            }
+        )
         result = await _chembl_search(
             "https://www.ebi.ac.uk/chembl/api/data",
             {"query": "aspirin"},
@@ -187,9 +199,11 @@ class TestChemblFallback:
 
     @pytest.mark.asyncio
     async def test_empty_results(self):
-        http = _mock_http({
-            "molecule/search": _response(json_data={"molecules": []}, status=200),
-        })
+        http = _mock_http(
+            {
+                "molecule/search": _response(json_data={"molecules": []}, status=200),
+            }
+        )
         result = await _chembl_search(
             "https://www.ebi.ac.uk/chembl/api/data",
             {"query": "zzzzz"},
@@ -199,9 +213,11 @@ class TestChemblFallback:
 
     @pytest.mark.asyncio
     async def test_missing_fields(self):
-        http = _mock_http({
-            "molecule/search": _response(json_data=CHEMBL_JSON),
-        })
+        http = _mock_http(
+            {
+                "molecule/search": _response(json_data=CHEMBL_JSON),
+            }
+        )
         result = await _chembl_search(
             "https://www.ebi.ac.uk/chembl/api/data",
             {"query": "test"},
@@ -216,12 +232,15 @@ class TestChemblFallback:
 # AlphaFold tests
 # ---------------------------------------------------------------------------
 
+
 class TestAlphafoldFallback:
     @pytest.mark.asyncio
     async def test_basic_search(self):
-        http = _mock_http({
-            "prediction/P04637": _response(json_data=ALPHAFOLD_JSON),
-        })
+        http = _mock_http(
+            {
+                "prediction/P04637": _response(json_data=ALPHAFOLD_JSON),
+            }
+        )
         result = await _alphafold_search(
             "https://alphafold.ebi.ac.uk/api",
             {"query": "P04637"},
@@ -236,9 +255,11 @@ class TestAlphafoldFallback:
 
     @pytest.mark.asyncio
     async def test_empty_results(self):
-        http = _mock_http({
-            "prediction/ZZZZ": _response(status=404),
-        })
+        http = _mock_http(
+            {
+                "prediction/ZZZZ": _response(status=404),
+            }
+        )
         result = await _alphafold_search(
             "https://alphafold.ebi.ac.uk/api",
             {"query": "ZZZZ"},
@@ -248,9 +269,11 @@ class TestAlphafoldFallback:
 
     @pytest.mark.asyncio
     async def test_missing_fields(self):
-        http = _mock_http({
-            "prediction/": _response(json_data={"predictions": []}),
-        })
+        http = _mock_http(
+            {
+                "prediction/": _response(json_data={"predictions": []}),
+            }
+        )
         result = await _alphafold_search(
             "https://alphafold.ebi.ac.uk/api",
             {},
@@ -263,12 +286,15 @@ class TestAlphafoldFallback:
 # ZINC tests
 # ---------------------------------------------------------------------------
 
+
 class TestZincFallback:
     @pytest.mark.asyncio
     async def test_basic_search(self):
-        http = _mock_http({
-            "substances/search": _response(json_data=ZINC_JSON),
-        })
+        http = _mock_http(
+            {
+                "substances/search": _response(json_data=ZINC_JSON),
+            }
+        )
         result = await _zinc_search(
             "https://zinc.docking.org/api",
             {"query": "aspirin"},
@@ -282,9 +308,11 @@ class TestZincFallback:
 
     @pytest.mark.asyncio
     async def test_empty_results(self):
-        http = _mock_http({
-            "substances/search": _response(json_data={"substances": []}, status=200),
-        })
+        http = _mock_http(
+            {
+                "substances/search": _response(json_data={"substances": []}, status=200),
+            }
+        )
         result = await _zinc_search(
             "https://zinc.docking.org/api",
             {"query": "zzzzz"},
@@ -295,9 +323,11 @@ class TestZincFallback:
     @pytest.mark.asyncio
     async def test_missing_fields(self):
         data = {"substances": [{"id": "Z1"}]}
-        http = _mock_http({
-            "substances/search": _response(json_data=data),
-        })
+        http = _mock_http(
+            {
+                "substances/search": _response(json_data=data),
+            }
+        )
         result = await _zinc_search(
             "https://zinc.docking.org/api",
             {"query": "test"},

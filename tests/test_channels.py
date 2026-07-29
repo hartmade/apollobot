@@ -77,7 +77,9 @@ class TestWebhookChannel:
         mock_client.post = AsyncMock(return_value=mock_resp)
         mock_client.aclose = AsyncMock()
 
-        with patch("apollobot.notifications.channels.webhook.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "apollobot.notifications.channels.webhook.httpx.AsyncClient", return_value=mock_client
+        ):
             await ch.send(_make_event())
 
         mock_client.post.assert_awaited_once()
@@ -97,7 +99,9 @@ class TestWebhookChannel:
         mock_client.post = AsyncMock(return_value=mock_resp)
         mock_client.aclose = AsyncMock()
 
-        with patch("apollobot.notifications.channels.webhook.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "apollobot.notifications.channels.webhook.httpx.AsyncClient", return_value=mock_client
+        ):
             await ch.send(_make_event())
 
         headers = mock_client.post.call_args[1]["headers"]
@@ -124,7 +128,9 @@ class TestSlackChannel:
         mock_client.post = AsyncMock(return_value=mock_resp)
         mock_client.aclose = AsyncMock()
 
-        with patch("apollobot.notifications.channels.slack.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "apollobot.notifications.channels.slack.httpx.AsyncClient", return_value=mock_client
+        ):
             await ch.send(_make_event(phase="analysis"))
 
         payload = mock_client.post.call_args[1]["json"]
@@ -151,7 +157,10 @@ class TestGoogleChatChannel:
         mock_client.post = AsyncMock(return_value=mock_resp)
         mock_client.aclose = AsyncMock()
 
-        with patch("apollobot.notifications.channels.google_chat.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "apollobot.notifications.channels.google_chat.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
             await ch.send(_make_event())
 
         payload = mock_client.post.call_args[1]["json"]
@@ -177,7 +186,9 @@ class TestTelegramChannel:
         mock_client.post = AsyncMock(return_value=mock_resp)
         mock_client.aclose = AsyncMock()
 
-        with patch("apollobot.notifications.channels.telegram.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "apollobot.notifications.channels.telegram.httpx.AsyncClient", return_value=mock_client
+        ):
             await ch.send(_make_event())
 
         payload = mock_client.post.call_args[1]["json"]
@@ -203,7 +214,9 @@ class TestTelegramChannel:
             phase="plan",
         )
 
-        with patch("apollobot.notifications.channels.telegram.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "apollobot.notifications.channels.telegram.httpx.AsyncClient", return_value=mock_client
+        ):
             await ch.send(event)
 
         payload = mock_client.post.call_args[1]["json"]
@@ -231,7 +244,9 @@ class TestDiscordChannel:
         mock_client.post = AsyncMock(return_value=mock_resp)
         mock_client.aclose = AsyncMock()
 
-        with patch("apollobot.notifications.channels.discord.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "apollobot.notifications.channels.discord.httpx.AsyncClient", return_value=mock_client
+        ):
             await ch.send(_make_event())
 
         payload = mock_client.post.call_args[1]["json"]
@@ -256,10 +271,12 @@ class TestEmailChannel:
         )
 
         with patch.object(ch, "_smtp_send") as mock_smtp:
-            await ch.send(_make_event(
-                event_type=EventType.SESSION_FAILED,
-                severity=EventSeverity.CRITICAL,
-            ))
+            await ch.send(
+                _make_event(
+                    event_type=EventType.SESSION_FAILED,
+                    severity=EventSeverity.CRITICAL,
+                )
+            )
             mock_smtp.assert_called_once()
 
     @pytest.mark.asyncio

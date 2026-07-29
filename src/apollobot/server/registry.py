@@ -56,13 +56,16 @@ class SessionRegistry:
         session.init_directories()
 
         provenance = ProvenanceEngine(session.session_dir)
-        provenance.log_event("session_started", {
-            "mission_id": mission.id,
-            "objective": mission.objective,
-            "mode": mission.mode.value,
-            "domain": mission.domain,
-            "source": "mcp_server",
-        })
+        provenance.log_event(
+            "session_started",
+            {
+                "mission_id": mission.id,
+                "objective": mission.objective,
+                "mode": mission.mode.value,
+                "domain": mission.domain,
+                "source": "mcp_server",
+            },
+        )
 
         active = ActiveSession(
             session_id=mission.id,
@@ -102,7 +105,9 @@ class SessionRegistry:
 
     async def load_from_disk(self, session_id: str) -> ActiveSession:
         """Load a historical session from disk into active memory."""
-        sessions_dir = Path(self.config.output_dir) if self.config.output_dir else APOLLO_SESSIONS_DIR
+        sessions_dir = (
+            Path(self.config.output_dir) if self.config.output_dir else APOLLO_SESSIONS_DIR
+        )
         session_dir = sessions_dir / session_id
 
         session = Session.load_state(session_dir)
@@ -131,7 +136,9 @@ class SessionRegistry:
 
     def list_historical(self) -> list[dict[str, Any]]:
         """Scan disk for historical sessions."""
-        sessions_dir = Path(self.config.output_dir) if self.config.output_dir else APOLLO_SESSIONS_DIR
+        sessions_dir = (
+            Path(self.config.output_dir) if self.config.output_dir else APOLLO_SESSIONS_DIR
+        )
         results = []
         if not sessions_dir.exists():
             return results
@@ -141,20 +148,24 @@ class SessionRegistry:
             if d.is_dir() and state_file.exists():
                 try:
                     session = Session.load_state(d)
-                    results.append({
-                        "session_id": session.mission.id,
-                        "objective": session.mission.objective,
-                        "mode": session.mission.mode.value,
-                        "domain": session.mission.domain,
-                        "current_phase": session.current_phase.value,
-                        "cost": session.cost.total_cost,
-                        "active": False,
-                    })
+                    results.append(
+                        {
+                            "session_id": session.mission.id,
+                            "objective": session.mission.objective,
+                            "mode": session.mission.mode.value,
+                            "domain": session.mission.domain,
+                            "current_phase": session.current_phase.value,
+                            "cost": session.cost.total_cost,
+                            "active": False,
+                        }
+                    )
                 except Exception:
-                    results.append({
-                        "session_id": d.name,
-                        "error": "corrupted",
-                        "active": False,
-                    })
+                    results.append(
+                        {
+                            "session_id": d.name,
+                            "error": "corrupted",
+                            "active": False,
+                        }
+                    )
 
         return results

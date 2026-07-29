@@ -1,279 +1,182 @@
 # ApolloBot
 
-[![PyPI version](https://badge.fury.io/py/apollobot.svg)](https://badge.fury.io/py/apollobot)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
-**The autonomous research engine by [Frontier Science](https://frontierscience.ai). Give it a question. Get back a paper.**
+ApolloBot is Frontier Science's inspectable computational-research engine. It
+turns a research question into a reviewable experiment plan, pauses for human
+approval, executes the approved work, and captures the resulting evidence,
+artifacts, and provenance.
 
-ApolloBot is an open-source framework that connects frontier AI models to scientific data sources, compute resources, and analysis tools via [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) — enabling fully autonomous computational research.
+Version 0.2 is alpha software. Its output is a research draft and evidence
+record, not proof that a claim is true or ready for publication.
 
-```bash
-pip install apollobot
-apollo init
-apollo research "Does gut microbiome diversity correlate with epigenetic age acceleration?"
+## What is implemented
+
+ApolloBot has two supported surfaces:
+
+- A local CLI for contributor-controlled research sessions.
+- An authenticated worker API used by the Frontier Science web platform.
+
+The managed worker provides:
+
+- deterministic safety screening before model-based question framing;
+- a durable SQLite/WAL investigation and event store;
+- an explicit human checkpoint between experiment design and execution;
+- bounded planning and execution concurrency;
+- resumable server-sent event streams and indexed, checksummed artifacts;
+- crash recovery that pauses interrupted compute instead of silently rerunning it;
+- short-lived, network-disabled Docker analysis containers in production;
+- dataset access manifests that distinguish public, synthetic,
+  access-controlled, and code-only inputs and exclude restricted raw data from
+  publication unless redistribution is allowed;
+- conservative discovery triage and citation-safe related-literature results
+  that explicitly do not establish a breakthrough;
+- signed event and artifact delivery to the Frontier Science platform; and
+- an automated review worker for completed living records.
+
+ApolloBot does **not** guarantee novelty, causal validity, connector
+availability, successful execution, or acceptance for publication. It does not
+perform wet-lab work. Direct CLI submission to Frontier Science was retired in
+v0.2 so identity, funding, provenance, review, and DOI state remain attached to
+an authenticated living record.
+
+## Install from source
+
+Prerequisites:
+
+- Python 3.11 or newer
+- [uv](https://docs.astral.sh/uv/)
+- an Anthropic, OpenAI/OpenAI-compatible, or MiniMax API key
+- Docker for the production worker sandbox
+
+```sh
+git clone https://github.com/frontier-science-ai/apollobot.git
+cd apollobot
+uv sync --frozen --extra dev
+uv run apollo --version
 ```
 
-That's it. The agent handles literature review, data acquisition, analysis, and manuscript drafting. You handle the science — reviewing, steering, and publishing.
+ApolloBot is not currently advertised as a published PyPI package; use the
+locked source installation above for a reproducible development environment.
 
----
+## Local CLI
 
-## What It Does
+Configure a local profile and start a session:
 
-ApolloBot is an **autonomous research agent** that:
-
-1. **Parses** a natural language research objective into a structured research plan
-2. **Reviews** existing literature via PubMed, arXiv, Semantic Scholar
-3. **Acquires** data from public repositories (GEO, GenBank, FRED, HuggingFace, etc.)
-4. **Analyzes** data using domain-appropriate statistical and computational methods
-5. **Generates** publication-ready manuscripts with figures, tables, and full provenance logs
-6. **Self-reviews** its own work for statistical validity and methodological soundness
-
-All via MCP servers — modular, extensible, and transparent.
-
-## Quick Start
-
-### Prerequisites
-
-- Python 3.11+
-- An API key for at least one frontier AI provider (Anthropic recommended)
-
-### Install
-
-```bash
-pip install apollobot
+```sh
+uv run apollo init
+uv run apollo discover \
+  "Does a measurable relationship exist between urban tree-canopy coverage and summer surface temperature in comparable census tracts?"
 ```
 
-### Initialize
+The `research` command is an alias for `discover`. Local sessions are stored in
+`~/apollobot-research` unless `output_dir` is changed in
+`~/.apollobot/config.yaml`.
 
-```bash
-apollo init
+Useful inspection commands include:
+
+```sh
+uv run apollo status
+uv run apollo list
+uv run apollo provenance <session-id>
+uv run apollo review --session <session-id>
+uv run apollo export --output research-export.tar.gz
 ```
 
-This walks you through:
-- Your identity (name, affiliation, ORCID)
-- Your research domain (bioinformatics, physics, CS/ML, comp chem, economics)
-- API key configuration
-- Compute preferences (local, cloud, hybrid)
+Local CLI sessions run with the permissions of the invoking user. Treat model-
+generated code and third-party data as untrusted and inspect the proposed work
+before allowing it to run.
 
-### Run Your First Research Session
+## Managed platform lifecycle
 
-```bash
-# Simple — one line
-apollo research "What is the relationship between telomere length and DNA methylation age in publicly available cohort data?"
+The production web flow is intentionally stateful:
 
-# Structured — from a mission file
-apollo research --from mission.yaml
+1. `POST /v1/questions/check` frames and screens the question.
+2. `POST /v1/investigations` creates a durable, unexecuted investigation.
+3. The `prepare` action develops hypotheses and an executable experiment plan.
+4. ApolloBot waits in `awaiting_approval` until a person approves the plan.
+5. The `approve` action queues execution; `pause`, `resume`, and `cancel` are
+   explicit operator controls.
+6. `GET /v1/investigations/{id}/events` streams progress with resumable event
+   sequence numbers.
+7. Completed files are indexed with media type, byte size, and SHA-256 checksum.
+8. The completed result includes discovery triage and related literature, while
+   retaining null, inconclusive, and failed outcomes honestly.
+9. The web platform turns the investigation into a living research record for
+   reproduction, challenge, branching, derivation, discussion, review, and
+   publication.
 
-# Specific mode
-apollo research --mode meta-analysis "CRISPR off-target effects in therapeutic applications"
-```
+All `/v1/*` routes require the service bearer token. Browsers must call the
+Frontier Science gateway, never ApolloBot directly.
 
-### Monitor Progress
+## Scientific data connectors
 
-```bash
-# Check session status
-apollo status
+The 54 built-in connectors use audited direct adapters for public scientific
+APIs by default. This is the supported deployment mode and does not depend on a
+Frontier Science-owned MCP hostname. If an adapter service is deployed later,
+set `APOLLOBOT_MCP_PROXY_URL` to its HTTPS base URL; failed query requests still
+fall back to the direct adapters. Connectors that require provider credentials
+identify the required environment variable in the domain-pack source.
 
-# List all sessions
-apollo list
-```
+## Production deployment
 
-## Research Modes
+The deployment package builds separate service and sandbox images. Start with
+[`deploy/README.md`](deploy/README.md) and [`deploy/.env.example`](deploy/.env.example).
+The production service refuses to start when required secrets, HTTPS callback
+configuration, a supported model provider, or the container sandbox policy are
+missing.
 
-| Mode | Use Case | Description |
-|------|----------|-------------|
-| `hypothesis` | Testing specific claims | Classical scientific method. Attempts to falsify. |
-| `exploratory` | Pattern discovery | Data-mining with built-in multiple comparison correction. |
-| `meta-analysis` | Literature synthesis | Systematic review across hundreds of papers. |
-| `replication` | Reproducing studies | Adversarial replication of existing published work. |
-| `simulation` | Theoretical exploration | Build and run computational models and simulations. |
+Keep the API on a private network behind an HTTPS reverse proxy. Access to a
+Docker socket is a high-trust capability; use a dedicated worker host or a
+rootless Docker daemon. Back up the SQLite database and output directory as one
+unit.
 
-```bash
-apollo research --mode replication --paper arxiv:2401.12345
-apollo research --mode exploratory --dataset GSE184571
-apollo research --mode simulation "Agent-based model of monetary policy transmission"
-```
+## Research records and artifacts
 
-## MCP Architecture
+The exact files depend on the selected mode, data sources, and whether each
+phase succeeds. A session may contain:
 
-Every capability is an MCP server. ApolloBot ships with connectors for:
-
-**Data Sources**
-- PubMed / PMC (biomedical literature)
-- arXiv (preprints)
-- Semantic Scholar (citation graphs)
-- GEO / GenBank / UniProt (genomics)
-- FRED / World Bank (economics)
-- HuggingFace Datasets (ML)
-- Materials Project (physics/materials)
-- PubChem / ChEMBL (chemistry)
-
-**Compute**
-- Local execution (NumPy, SciPy, scikit-learn, statsmodels)
-- GPU provisioning (Lambda Labs, AWS, RunPod)
-- Simulation engines (configurable per domain)
-
-**Writing**
-- LaTeX manuscript generation
-- Figure and table creation (matplotlib, seaborn, plotly)
-- Citation management (BibTeX)
-
-### Adding Custom MCP Servers
-
-```python
-# Register a custom data source
-from apollobot.mcp import register_server
-
-register_server(
-    name="my-lab-database",
-    url="http://localhost:8080/mcp",
-    description="Internal proteomics database",
-    domain="bioinformatics"
-)
-```
-
-Or via config:
-
-```yaml
-# ~/.apollobot/servers.yaml
-custom_servers:
-  - name: university-hpc
-    url: https://hpc.myuniversity.edu/mcp
-    auth: bearer
-    token_env: UNI_HPC_TOKEN
-```
-
-## Research Output
-
-Every completed session produces:
-
-```
-~/apollobot-research/session-001/
-├── manuscript.tex              # Full paper, journal-formatted
-├── manuscript.pdf              # Compiled PDF
-├── figures/                    # Publication-quality figures
-├── data/                       # Processed datasets
-│   ├── raw/                    # Original downloaded data
-│   └── processed/              # Cleaned and transformed
-├── analysis/                   # All executed code
-│   ├── scripts/                # Analysis scripts
-│   └── notebooks/              # Jupyter notebooks (optional)
+```text
+<session>/
+├── mission.yaml
+├── session_state.json
+├── manuscript.md or manuscript.tex
+├── data/
+├── analysis/
+├── figures/
 ├── provenance/
-│   ├── execution_log.json      # Every decision and action
-│   ├── data_lineage.json       # Data transformation chain
-│   └── model_calls.json        # All LLM interactions
 ├── review/
-│   ├── self_review.md          # AI self-review report
-│   └── statistical_audit.json  # Automated stats checking
-├── replication_kit/
-│   ├── environment.yml         # Conda environment spec
-│   ├── replicate.sh            # One-command reproduction
-│   └── checksums.sha256        # Data integrity hashes
-└── mission.yaml                # Original research objective
+└── replication_kit/
 ```
 
-## Publishing to Frontier Science Journal
+An indexed artifact is evidence that a file was produced; it is not an
+endorsement of the file's scientific validity. Review the provenance log,
+source licensing, assumptions, exclusions, statistical tests, and limitations
+before relying on a result. Managed runs also create `data/access-manifest.json`;
+its access and redistribution fields govern which raw inputs may enter the
+publishable artifact set.
 
-ApolloBot integrates directly with [Frontier Science Journal](https://frontierscience.ai/journal) — the open-access journal purpose-built for AI-assisted research.
+## Development
 
-```bash
-# Submit directly from a completed session
-apollo submit --session session-001 --journal frontier
-
-# Check submission status
-apollo submit --status
+```sh
+uv run ruff format --check src tests
+uv run ruff check src tests
+uv run pytest -q
 ```
 
-Frontier Science Journal accepts submissions from any source, but ApolloBot-produced papers include full provenance logs that streamline the review process.
-
-## Mission Files
-
-For complex research objectives, define a mission file:
-
-```yaml
-# mission.yaml
-title: "Microplastic Epigenetic Effects"
-
-objective: >
-  Investigate whether chronic microplastic exposure induces
-  heritable DNA methylation changes in aquatic organisms
-
-hypotheses:
-  - Microplastic exposure alters methylation at stress-response loci
-  - Changes persist in F1 generation without continued exposure
-  - Effect size correlates with particle concentration
-
-mode: hypothesis
-
-constraints:
-  compute_budget: 50.00        # USD
-  time_limit: 48h
-  data_sources: public_only
-  ethics: observational_only
-
-domain: bioinformatics
-resource_pack: bioinformatics  # auto-connect domain MCP servers
-
-checkpoints:
-  - after: literature_review
-    action: require_approval
-  - after: data_acquisition
-    action: notify
-  - after: analysis
-    action: require_approval
-
-output:
-  format: paper_draft
-  target_journal: frontier
-  include_provenance: true
-  generate_notebooks: true
-```
-
-## Research Integrity
-
-ApolloBot is built with scientific rigor as a core design principle:
-
-- **Anti-confirmation bias**: Hypothesis mode actively seeks disconfirming evidence
-- **Multiple comparison correction**: Exploratory mode applies Bonferroni/FDR by default
-- **Effect size reporting**: Always reported alongside p-values
-- **Full provenance**: Every LLM call, data transformation, and decision is logged
-- **Reproducibility**: Replication kits generated automatically
-- **Self-review**: Built-in statistical and methodological auditing before output
+The CI workflow runs formatting, static checks, and the full test suite across
+the supported Python versions. The current release candidate passes 558 tests.
+Deployment changes should also exercise the container build and `/ready` check
+on a Docker-capable host.
 
 ## Contributing
 
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-Key areas:
-- **Domain packs**: Add MCP server connectors for new data sources
-- **Research modes**: Implement new research methodologies
-- **Analysis methods**: Add statistical and computational tools
-- **Review checks**: Improve the self-review engine
-
-## Roadmap
-
-- [x] Core agent loop and research modes
-- [x] Bioinformatics domain pack
-- [x] Computational physics domain pack
-- [x] CS/ML domain pack
-- [x] Computational chemistry domain pack
-- [x] Quantitative economics domain pack
-- [ ] Web dashboard UI
-- [ ] Multi-agent collaborative research
-- [ ] Robotic lab integration (MCP → physical instruments)
-- [ ] Enterprise deployment (private MCP, compliance, audit)
+See [`CONTRIBUTING.md`](CONTRIBUTING.md). Particularly useful contributions are
+new tested data adapters, statistical validation, provenance improvements,
+sandbox hardening, and realistic evaluation cases. A registry entry describes
+an adapter; it is not a promise that a remote endpoint is deployed or reachable.
 
 ## License
 
-Apache 2.0 — use it freely, commercially or academically.
-
-## Community
-
-- [GitHub Issues](https://github.com/frontier-science/apollobot/issues)
-- [Frontier Science Journal](https://frontierscience.ai/journal)
-- [Documentation](https://apollobot.dev)
-
----
-
-*Part of [Frontier Science](https://frontierscience.ai) — the future of knowledge creation.*
+Apache-2.0. See [`LICENSE`](LICENSE).

@@ -70,19 +70,23 @@ class GoogleChatChannel(NotificationChannel):
         ]
 
         if event.phase:
-            widgets.append({
-                "decoratedText": {
-                    "topLabel": "Phase",
-                    "text": event.phase,
-                },
-            })
+            widgets.append(
+                {
+                    "decoratedText": {
+                        "topLabel": "Phase",
+                        "text": event.phase,
+                    },
+                }
+            )
 
-        widgets.append({
-            "decoratedText": {
-                "topLabel": "Session",
-                "text": event.session_id,
-            },
-        })
+        widgets.append(
+            {
+                "decoratedText": {
+                    "topLabel": "Session",
+                    "text": event.session_id,
+                },
+            }
+        )
 
         return {
             "cardsV2": [

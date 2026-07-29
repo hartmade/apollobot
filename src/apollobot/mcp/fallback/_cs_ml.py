@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 # HuggingFace adapter
 # ---------------------------------------------------------------------------
 
+
 async def _huggingface_search(
     api_base: str,
     params: dict[str, Any],
@@ -38,14 +39,16 @@ async def _huggingface_search(
     papers = []
     for item in items[:limit]:
         model_id = item.get("modelId", item.get("id", ""))
-        papers.append({
-            "title": model_id,
-            "abstract": item.get("pipeline_tag", ""),
-            "year": 0,
-            "doi": "",
-            "source": "huggingface",
-            "url": f"https://huggingface.co/{model_id}",
-        })
+        papers.append(
+            {
+                "title": model_id,
+                "abstract": item.get("pipeline_tag", ""),
+                "year": 0,
+                "doi": "",
+                "source": "huggingface",
+                "url": f"https://huggingface.co/{model_id}",
+            }
+        )
 
     logger.info("HuggingFace fallback: %d results for query=%r", len(papers), query)
     return {"papers": papers}
@@ -54,6 +57,7 @@ async def _huggingface_search(
 # ---------------------------------------------------------------------------
 # Papers With Code adapter
 # ---------------------------------------------------------------------------
+
 
 async def _papers_with_code_search(
     api_base: str,
@@ -81,15 +85,17 @@ async def _papers_with_code_search(
         title = item.get("title", "")
         abstract = item.get("summary", "")
 
-        papers.append({
-            "title": title,
-            "abstract": abstract,
-            "year": 0,
-            "doi": "",
-            "arxiv_id": arxiv_id,
-            "source": "papers_with_code",
-            "url": f"https://arxiv.org/abs/{arxiv_id}" if arxiv_id else "",
-        })
+        papers.append(
+            {
+                "title": title,
+                "abstract": abstract,
+                "year": 0,
+                "doi": "",
+                "arxiv_id": arxiv_id,
+                "source": "papers_with_code",
+                "url": f"https://arxiv.org/abs/{arxiv_id}" if arxiv_id else "",
+            }
+        )
 
     logger.info("Papers With Code fallback: %d papers for query=%r", len(papers), query)
     return {"papers": papers}
@@ -98,6 +104,7 @@ async def _papers_with_code_search(
 # ---------------------------------------------------------------------------
 # OpenML adapter
 # ---------------------------------------------------------------------------
+
 
 async def _openml_search(
     api_base: str,
@@ -126,14 +133,16 @@ async def _openml_search(
         name = ds.get("name", "")
         if query.lower() not in name.lower():
             continue
-        papers.append({
-            "title": name,
-            "abstract": ds.get("format", ""),
-            "year": 0,
-            "doi": "",
-            "source": "openml",
-            "url": f"https://www.openml.org/d/{ds.get('did', '')}",
-        })
+        papers.append(
+            {
+                "title": name,
+                "abstract": ds.get("format", ""),
+                "year": 0,
+                "doi": "",
+                "source": "openml",
+                "url": f"https://www.openml.org/d/{ds.get('did', '')}",
+            }
+        )
 
     logger.info("OpenML fallback: %d results for query=%r", len(papers), query)
     return {"papers": papers}

@@ -23,14 +23,14 @@ from apollobot.notifications.events import (
 logger = logging.getLogger(__name__)
 
 _SEVERITY_COLOR = {
-    EventSeverity.INFO: 0x3498DB,      # blue
-    EventSeverity.WARNING: 0xF39C12,   # orange
-    EventSeverity.ERROR: 0xE74C3C,     # red
+    EventSeverity.INFO: 0x3498DB,  # blue
+    EventSeverity.WARNING: 0xF39C12,  # orange
+    EventSeverity.ERROR: 0xE74C3C,  # red
     EventSeverity.CRITICAL: 0x8E44AD,  # purple
 }
 
 APPROVE_EMOJI = "\u2705"  # check mark
-DENY_EMOJI = "\u274c"     # cross mark
+DENY_EMOJI = "\u274c"  # cross mark
 
 
 class DiscordChannel(NotificationChannel):
@@ -72,9 +72,7 @@ class DiscordChannel(NotificationChannel):
         else:
             await self._send_via_webhook(payload)
 
-    async def wait_for_response(
-        self, event: NotificationEvent, timeout: float = 3600
-    ) -> bool:
+    async def wait_for_response(self, event: NotificationEvent, timeout: float = 3600) -> bool:
         """Poll for reactions on the approval message."""
         if not self.supports_responses:
             return True
@@ -113,9 +111,7 @@ class DiscordChannel(NotificationChannel):
                         if resp.status_code == 200:
                             users = resp.json()
                             # Filter out bot's own reactions
-                            human_reacted = any(
-                                not u.get("bot", False) for u in users
-                            )
+                            human_reacted = any(not u.get("bot", False) for u in users)
                             if human_reacted:
                                 return emoji == APPROVE_EMOJI
                 except httpx.HTTPError:
@@ -137,9 +133,7 @@ class DiscordChannel(NotificationChannel):
             if not self._client:
                 await client.aclose()
 
-    async def _send_via_bot(
-        self, event: NotificationEvent, embed: dict[str, Any]
-    ) -> None:
+    async def _send_via_bot(self, event: NotificationEvent, embed: dict[str, Any]) -> None:
         client = self._client or httpx.AsyncClient(timeout=30.0)
         headers = {"Authorization": f"Bot {self.bot_token}"}
         try:

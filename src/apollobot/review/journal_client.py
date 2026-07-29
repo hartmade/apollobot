@@ -1,21 +1,15 @@
-"""
-JournalClient — HTTP client for posting AI reviews to the Frontier Science Journal API.
+"""Compatibility shim for the retired shared-secret journal integration.
 
-Signs requests with HMAC-SHA256 using the shared webhook secret.
+Publication now happens through authenticated Frontier Science living records.
+Keeping this inert class for one release gives downstream imports a clear error
+instead of silently sending data to obsolete endpoints.
 """
 
 from __future__ import annotations
 
 import hashlib
 import hmac
-import json
-import logging
-from pathlib import Path
-from typing import Any
-
-import httpx
-
-logger = logging.getLogger(__name__)
+from typing import Any, Never
 
 # Maps ApolloBot dimension names to journal API dimension names.
 DIMENSION_MAP: dict[str, str] = {
@@ -27,8 +21,12 @@ DIMENSION_MAP: dict[str, str] = {
 }
 
 
+class LegacyJournalIntegrationRetiredError(RuntimeError):
+    """Raised when code calls the retired direct-journal integration."""
+
+
 class JournalClient:
-    """Posts AI reviews and notifications to the Frontier Science Journal API."""
+    """Inert compatibility surface for the retired direct-journal client."""
 
     def __init__(
         self,
@@ -55,6 +53,14 @@ class JournalClient:
         return headers
 
     @staticmethod
+    def _retired() -> Never:
+        raise LegacyJournalIntegrationRetiredError(
+            "Direct shared-secret journal posting was retired in ApolloBot v0.2. "
+            "Create reviews and publications through an authenticated Frontier Science "
+            "living record."
+        )
+
+    @staticmethod
     def map_scores(scores: list[dict[str, Any]]) -> dict[str, int]:
         """Convert list of DimensionScore dicts to the flat {name: score} the journal expects."""
         mapped: dict[str, int] = {}
@@ -69,29 +75,9 @@ class JournalClient:
         paper_id: str,
         review_data: dict[str, Any],
     ) -> dict[str, Any]:
-        """POST the AI review to /api/papers/{paper_id}/ai-review."""
-        url = f"{self.base_url}/api/papers/{paper_id}/ai-review"
-
-        # Transform scores from list to flat dict expected by journal
-        scores = review_data.get("scores", [])
-        if isinstance(scores, list):
-            scores = self.map_scores(scores)
-
-        payload: dict[str, Any] = {
-            "recommendation": review_data.get("recommendation"),
-            "confidence": review_data.get("confidence"),
-            "scores": scores,
-            "issues": review_data.get("key_issues", []),
-            "strengths": review_data.get("strengths", []),
-            "summary": review_data.get("summary", ""),
-            "provenance_badge": review_data.get("provenance_badge"),
-        }
-
-        body = json.dumps(payload)
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            resp = await client.post(url, content=body, headers=self._headers(body))
-            resp.raise_for_status()
-            return resp.json()
+        """Reject a call to the retired direct review endpoint."""
+        _ = (paper_id, review_data)
+        self._retired()
 
     async def submit_paper(
         self,
@@ -102,49 +88,18 @@ class JournalClient:
         submitter_email: str = "",
         authors: list[dict[str, str]] | None = None,
     ) -> dict[str, Any]:
-        """POST a paper submission to /api/papers/cli-submit."""
-        url = f"{self.base_url}/api/papers/cli-submit"
-
-        payload: dict[str, Any] = {
-            "title": title,
-            "abstract": abstract,
-            "track": track,
-        }
-        if session_id:
-            payload["sessionId"] = session_id
-        if submitter_email:
-            payload["submitterEmail"] = submitter_email
-        if authors:
-            payload["authors"] = authors
-
-        body = json.dumps(payload)
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            resp = await client.post(url, content=body, headers=self._headers(body))
-            resp.raise_for_status()
-            return resp.json()
+        """Reject a call to the retired direct submission endpoint."""
+        _ = (title, abstract, track, session_id, submitter_email, authors)
+        self._retired()
 
     async def upload_manuscript(
         self,
         paper_id: str,
         file_path: str,
     ) -> dict[str, Any]:
-        """Upload a manuscript file to /api/papers/upload via multipart form."""
-        url = f"{self.base_url}/api/papers/upload"
-        import mimetypes
-
-        mime_type = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
-        file_name = Path(file_path).name
-
-        # For uploads, we sign a simple JSON identifier since multipart bodies
-        # are harder to sign consistently. The upload endpoint uses session auth
-        # so this is best-effort; the paper ownership check is the real guard.
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            with open(file_path, "rb") as f:
-                files = {"file": (file_name, f, mime_type)}
-                data = {"paperId": paper_id}
-                resp = await client.post(url, files=files, data=data)
-                resp.raise_for_status()
-                return resp.json()
+        """Reject a call to the retired direct manuscript endpoint."""
+        _ = (paper_id, file_path)
+        self._retired()
 
     async def post_notification(
         self,
@@ -153,18 +108,6 @@ class JournalClient:
         recipients: list[str],
         data: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """POST a notification to /api/papers/{paper_id}/notify."""
-        url = f"{self.base_url}/api/papers/{paper_id}/notify"
-
-        payload: dict[str, Any] = {
-            "event": event,
-            "recipients": recipients,
-        }
-        if data:
-            payload["data"] = data
-
-        body = json.dumps(payload)
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            resp = await client.post(url, content=body, headers=self._headers(body))
-            resp.raise_for_status()
-            return resp.json()
+        """Reject a call to the retired direct notification endpoint."""
+        _ = (paper_id, event, recipients, data)
+        self._retired()

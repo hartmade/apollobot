@@ -11,21 +11,42 @@ handles errors, and adapts when things don't go as planned.
 
 from __future__ import annotations
 
-import asyncio
+import hashlib
 import json
 import logging
 import traceback
-from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
-logger = logging.getLogger(__name__)
-
-from apollobot.agents import LLMProvider, LLMResponse
-from apollobot.agents.planner import AnalysisStep, ResearchPlan
+from apollobot.agents import LLMProvider
+from apollobot.agents.planner import ResearchPlan
+from apollobot.compute import ExecutionSandbox, SandboxPolicy
 from apollobot.core.mission import CheckpointAction, Mission
 from apollobot.core.provenance import ProvenanceEngine
 from apollobot.core.session import Phase, Session
 from apollobot.mcp import MCPClient
+
+logger = logging.getLogger(__name__)
+
+
+def declared_dataset_license(value: object, depth: int = 0) -> str:
+    """Return only a license explicitly supplied by a source response."""
+    if depth > 4:
+        return ""
+    if isinstance(value, dict):
+        for key in ("license", "licence", "license_name", "rights"):
+            declared = value.get(key)
+            if isinstance(declared, str) and declared.strip():
+                return declared.strip()[:240]
+        for nested in list(value.values())[:30]:
+            found = declared_dataset_license(nested, depth + 1)
+            if found:
+                return found
+    elif isinstance(value, list):
+        for nested in value[:30]:
+            found = declared_dataset_license(nested, depth + 1)
+            if found:
+                return found
+    return ""
 
 
 class CheckpointHandler:
@@ -96,10 +117,13 @@ class ResearchExecutor:
             # Budget check
             if not session.check_budget():
                 session.fail_phase(phase, "Budget exceeded")
-                self.provenance.log_event("budget_exceeded", {
-                    "spent": session.cost.total_cost,
-                    "limit": session.mission.constraints.compute_budget,
-                })
+                self.provenance.log_event(
+                    "budget_exceeded",
+                    {
+                        "spent": session.cost.total_cost,
+                        "limit": session.mission.constraints.compute_budget,
+                    },
+                )
                 await self.checkpoint.notify(
                     phase.value,
                     f"Budget exceeded: ${session.cost.total_cost:.2f} / "
@@ -124,14 +148,15 @@ class ResearchExecutor:
                 tb = traceback.format_exc()
                 logger.error("Phase %s failed:\n%s", phase.value, tb)
                 session.fail_phase(phase, str(e))
-                self.provenance.log_event("phase_error", {
-                    "phase": phase.value,
-                    "error": str(e),
-                    "traceback": tb,
-                })
-                await self.checkpoint.notify(
-                    phase.value, f"Phase failed: {e}"
+                self.provenance.log_event(
+                    "phase_error",
+                    {
+                        "phase": phase.value,
+                        "error": str(e),
+                        "traceback": tb,
+                    },
                 )
+                await self.checkpoint.notify(phase.value, f"Phase failed: {e}")
                 # Decide whether to continue or abort
                 if phase in (Phase.LITERATURE_REVIEW, Phase.DATA_ACQUISITION):
                     # These are critical — can't continue without them
@@ -182,21 +207,29 @@ class ResearchExecutor:
                         )
                         papers = results.get("papers", results.get("results", []))
                         all_papers.extend(papers)
-                        self.provenance.log_event("literature_search", {
-                            "server": server.name,
-                            "query": query,
-                            "results_count": len(papers),
-                        })
+                        self.provenance.log_event(
+                            "literature_search",
+                            {
+                                "server": server.name,
+                                "query": query,
+                                "results_count": len(papers),
+                            },
+                        )
                     except Exception as e:
                         logger.warning(
                             "Literature search failed: server=%s query=%r error=%s",
-                            server.name, query, e,
+                            server.name,
+                            query,
+                            e,
                         )
-                        self.provenance.log_event("literature_search_error", {
-                            "server": server.name,
-                            "query": query,
-                            "error": str(e),
-                        })
+                        self.provenance.log_event(
+                            "literature_search_error",
+                            {
+                                "server": server.name,
+                                "query": query,
+                                "error": str(e),
+                            },
+                        )
 
         # Deduplicate by title/DOI (filter out None/non-dict entries)
         seen = set()
@@ -217,10 +250,13 @@ class ResearchExecutor:
             )
             logger.warning(msg)
             session.warnings.append(msg)
-            self.provenance.log_event("empty_literature_results", {
-                "queries": plan.literature_queries,
-                "warning": msg,
-            })
+            self.provenance.log_event(
+                "empty_literature_results",
+                {
+                    "queries": plan.literature_queries,
+                    "warning": msg,
+                },
+            )
 
         # Use LLM to synthesize literature
         synthesis_preamble = ""
@@ -231,21 +267,25 @@ class ResearchExecutor:
             )
 
         synthesis_resp = await self.llm.complete(
-            messages=[{"role": "user", "content": (
-                synthesis_preamble
-                + f"Research objective: {session.mission.objective}\n\n"
-                f"I found {len(unique_papers)} relevant papers. Here are the key ones:\n\n"
-                + "\n".join(
-                    f"- {p.get('title') or 'Untitled'} ({p.get('year') or 'n.d.'}): "
-                    f"{(p.get('abstract') or 'No abstract')[:300]}"
-                    for p in unique_papers[:30]
-                )
-                + "\n\nSynthesize these findings into:\n"
-                "1. Current state of knowledge\n"
-                "2. Key gaps and contradictions\n"
-                "3. How this informs our research approach\n"
-                "4. Any adjustments to our hypotheses"
-            )}],
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        synthesis_preamble + f"Research objective: {session.mission.objective}\n\n"
+                        f"I found {len(unique_papers)} relevant papers. Here are the key ones:\n\n"
+                        + "\n".join(
+                            f"- {p.get('title') or 'Untitled'} ({p.get('year') or 'n.d.'}): "
+                            f"{(p.get('abstract') or 'No abstract')[:300]}"
+                            for p in unique_papers[:30]
+                        )
+                        + "\n\nSynthesize these findings into:\n"
+                        "1. Current state of knowledge\n"
+                        "2. Key gaps and contradictions\n"
+                        "3. How this informs our research approach\n"
+                        "4. Any adjustments to our hypotheses"
+                    ),
+                }
+            ],
             system="You are conducting a literature review. Be thorough and critical.",
         )
 
@@ -278,19 +318,45 @@ class ResearchExecutor:
         """
         Phase 2: Acquire datasets via MCP servers.
         """
-        self.provenance.log_event("data_acquisition_started", {
-            "requirements": [
-                {"description": r.description, "source_type": r.source_type,
-                 "server_name": r.server_name, "query_params": r.query_params}
-                for r in plan.data_requirements
-            ],
-        })
+        self.provenance.log_event(
+            "data_acquisition_started",
+            {
+                "requirements": [
+                    {
+                        "description": r.description,
+                        "source_type": r.source_type,
+                        "server_name": r.server_name,
+                        "query_params": r.query_params,
+                    }
+                    for r in plan.data_requirements
+                ],
+            },
+        )
 
         # Build set of registered server names for matching
         registered_servers = {s.name for s in self.mcp.get_servers()}
 
         acquired = []
+        access_manifest: list[dict[str, Any]] = []
         for req in plan.data_requirements:
+            if req.access_mode in {"access-controlled", "code-only"}:
+                dataset_info = {
+                    "source": req.server_name or req.source_type,
+                    "description": req.description,
+                    "query": req.query_params,
+                    "status": "declared-unavailable",
+                    "access_mode": req.access_mode,
+                    "license": req.license or "not-declared",
+                    "redistribution_allowed": False,
+                    "availability_note": req.availability_note
+                    or (
+                        "The dataset was not copied into this run; reproduce with "
+                        "separately authorized access."
+                    ),
+                }
+                session.datasets.append(dataset_info)
+                access_manifest.append(dataset_info)
+                continue
             # Accept any requirement that references a registered MCP server,
             # regardless of source_type.  The LLM often generates source_type
             # values like "download", "api_call", or "database" instead of the
@@ -309,13 +375,38 @@ class ResearchExecutor:
                         "query": req.query_params,
                         "status": "acquired",
                         "result_summary": str(result)[:500],
+                        "access_mode": req.access_mode,
+                        "license": (
+                            req.license or declared_dataset_license(result) or "not-declared"
+                        ),
+                        "redistribution_allowed": bool(
+                            req.redistribution_allowed or req.access_mode == "synthetic"
+                        ),
+                        "availability_note": req.availability_note or (
+                            "Raw data may be redistributed with the published record."
+                            if req.redistribution_allowed or req.access_mode == "synthetic"
+                            else (
+                                "The run preserves a checksum and acquisition recipe; "
+                                "raw data is not republished without a declared license."
+                            )
+                        ),
                     }
                     acquired.append(dataset_info)
                     session.datasets.append(dataset_info)
 
                     # Save raw data
-                    data_path = session.session_dir / "data" / "raw" / f"{req.server_name}_{len(acquired)}.json"
+                    data_path = (
+                        session.session_dir
+                        / "data"
+                        / "raw"
+                        / f"{req.server_name}_{len(acquired)}.json"
+                    )
                     data_path.write_text(json.dumps(result, indent=2, default=str))
+                    dataset_info["local_path"] = str(data_path.relative_to(session.session_dir))
+                    dataset_info["checksum_sha256"] = hashlib.sha256(
+                        data_path.read_bytes()
+                    ).hexdigest()
+                    access_manifest.append(dataset_info)
 
                     self.provenance.log_data_transform(
                         source=req.server_name,
@@ -325,13 +416,26 @@ class ResearchExecutor:
                     )
 
                 except Exception as e:
-                    self.provenance.log_event("data_acquisition_error", {
-                        "source": req.server_name,
-                        "error": str(e),
-                    })
+                    self.provenance.log_event(
+                        "data_acquisition_error",
+                        {
+                            "source": req.server_name,
+                            "error": str(e),
+                        },
+                    )
                     if req.priority == "required" and req.fallback:
                         # Try fallback
                         self.provenance.log_event("trying_fallback", {"fallback": req.fallback})
+
+        manifest_path = session.session_dir / "data" / "access-manifest.json"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(
+            json.dumps(
+                {"schema": "frontier-data-access/v1", "datasets": access_manifest},
+                indent=2,
+                default=str,
+            )
+        )
 
         if not acquired:
             msg = (
@@ -340,10 +444,13 @@ class ResearchExecutor:
             )
             logger.warning(msg)
             session.warnings.append(msg)
-            self.provenance.log_event("empty_data_acquisition", {
-                "requirements_count": len(plan.data_requirements),
-                "warning": msg,
-            })
+            self.provenance.log_event(
+                "empty_data_acquisition",
+                {
+                    "requirements_count": len(plan.data_requirements),
+                    "warning": msg,
+                },
+            )
 
         return (
             f"Acquired {len(acquired)} datasets from {len(plan.data_requirements)} requirements",
@@ -375,26 +482,40 @@ class ResearchExecutor:
         file_context = "\n\n".join(file_previews) if file_previews else "No data files found."
 
         results = []
+        random_seed = session.mission.metadata.get("random_seed")
+        seed_instruction = (
+            f"Use the preregistered random seed {random_seed} for every stochastic "
+            "operation and report the seed in the result. "
+            if isinstance(random_seed, int)
+            else ""
+        )
         for step in plan.analysis_steps:
             # Ask LLM to generate analysis code
             code_resp = await self.llm.complete(
-                messages=[{"role": "user", "content": (
-                    f"Generate Python code for this analysis step:\n\n"
-                    f"Name: {step.name}\n"
-                    f"Description: {step.description}\n"
-                    f"Method: {step.method}\n"
-                    f"Parameters: {json.dumps(step.parameters)}\n"
-                    f"Expected output: {step.expected_output}\n\n"
-                    f"Available data files in {session.session_dir / 'data' / 'raw'}:\n"
-                    f"{[str(f.name) for f in (session.session_dir / 'data' / 'raw').glob('*')]}\n\n"
-                    f"Data file contents (use these exact structures in your code):\n"
-                    f"{file_context}\n\n"
-                    "Write clean, documented Python code using standard scientific Python "
-                    "(numpy, pandas, scipy, scikit-learn, statsmodels). "
-                    "Save results to the session's data/processed directory. "
-                    "Save any figures to the session's figures directory. "
-                    "Print a JSON summary of results to stdout."
-                )}],
+                messages=[
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Generate Python code for this analysis step:\n\n"
+                            f"Name: {step.name}\n"
+                            f"Description: {step.description}\n"
+                            f"Method: {step.method}\n"
+                            f"Parameters: {json.dumps(step.parameters)}\n"
+                            f"Expected output: {step.expected_output}\n\n"
+                            "Available data files in data/raw:\n"
+                            f"{[str(f.name) for f in (session.session_dir / 'data' / 'raw').glob('*')]}\n\n"
+                            f"Data file contents (use these exact structures in your code):\n"
+                            f"{file_context}\n\n"
+                            "Write clean, documented Python code using only the installed "
+                            "scientific packages (numpy, pandas, scipy, scikit-learn, "
+                            "statsmodels, matplotlib, seaborn) or the Python standard library. "
+                            "Use relative paths from /workspace. Save results to data/processed. "
+                            "Save figures to figures. Do not modify inputs, mission files, or provenance. "
+                            f"{seed_instruction}"
+                            "Print a JSON summary of results to stdout."
+                        ),
+                    }
+                ],
                 system=(
                     "You are a computational scientist writing analysis code. "
                     "Write clean, correct, documented code. Use appropriate "
@@ -424,33 +545,40 @@ class ResearchExecutor:
                 parameters=step.parameters,
             )
 
-            # Execute (in v1, we use subprocess; in production, sandboxed execution)
+            # Execute inside the mission's declared sandbox policy. Web-service
+            # missions require container mode; the CLI can explicitly use local.
             try:
-                import subprocess
-                result = subprocess.run(
-                    ["python", str(script_path)],
-                    capture_output=True,
-                    text=True,
-                    timeout=600,  # 10 minute timeout per step
-                    cwd=str(session.session_dir),
+                result = await self._sandbox(session).run_python(
+                    script_path,
+                    workspace=session.session_dir,
+                    timeout_seconds=600,
                 )
 
                 step_result = {
                     "step": step.name,
-                    "status": "completed" if result.returncode == 0 else "failed",
+                    "status": (
+                        "timeout"
+                        if result.timed_out
+                        else "completed"
+                        if result.returncode == 0
+                        else "failed"
+                    ),
                     "stdout": result.stdout[:2000],
                     "stderr": result.stderr[:1000] if result.returncode != 0 else "",
+                    "sandbox_mode": self._sandbox(session).policy.mode,
+                    "output_truncated": result.truncated,
                 }
                 results.append(step_result)
 
-                self.provenance.log_event("analysis_step_completed", {
-                    "step": step.name,
-                    "returncode": result.returncode,
-                })
-
-            except subprocess.TimeoutExpired:
-                results.append({"step": step.name, "status": "timeout"})
-                self.provenance.log_event("analysis_step_timeout", {"step": step.name})
+                self.provenance.log_event(
+                    "analysis_step_completed",
+                    {
+                        "step": step.name,
+                        "returncode": result.returncode,
+                        "timed_out": result.timed_out,
+                        "sandbox_mode": self._sandbox(session).policy.mode,
+                    },
+                )
 
             except Exception as e:
                 results.append({"step": step.name, "status": "error", "error": str(e)})
@@ -477,21 +605,36 @@ class ResearchExecutor:
         if not analysis_results:
             return ("No analysis results to test", [])
 
+        random_seed = session.mission.metadata.get("random_seed")
+        seed_instruction = (
+            f"\n7. Uses the preregistered random seed {random_seed} for every stochastic operation"
+            if isinstance(random_seed, int)
+            else ""
+        )
+
         # Ask LLM to design and run statistical tests
         stats_resp = await self.llm.complete(
-            messages=[{"role": "user", "content": (
-                f"Research objective: {session.mission.objective}\n\n"
-                f"Hypotheses:\n" + "\n".join(f"- {h}" for h in session.mission.hypotheses) + "\n\n"
-                f"Statistical framework: {plan.statistical_framework}\n\n"
-                f"Analysis results summary:\n{json.dumps(analysis_results.findings[:5], indent=2, default=str)}\n\n"
-                "Generate Python code that:\n"
-                "1. Loads the processed data\n"
-                "2. Runs appropriate statistical tests for each hypothesis\n"
-                "3. Applies multiple comparison correction\n"
-                "4. Reports effect sizes with confidence intervals\n"
-                "5. Outputs a structured JSON summary of results\n"
-                "6. Clearly states whether each hypothesis is supported, rejected, or inconclusive"
-            )}],
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        f"Research objective: {session.mission.objective}\n\n"
+                        f"Hypotheses:\n"
+                        + "\n".join(f"- {h}" for h in session.mission.hypotheses)
+                        + "\n\n"
+                        f"Statistical framework: {plan.statistical_framework}\n\n"
+                        f"Analysis results summary:\n{json.dumps(analysis_results.findings[:5], indent=2, default=str)}\n\n"
+                        "Generate Python code that:\n"
+                        "1. Loads the processed data\n"
+                        "2. Runs appropriate statistical tests for each hypothesis\n"
+                        "3. Applies multiple comparison correction\n"
+                        "4. Reports effect sizes with confidence intervals\n"
+                        "5. Outputs a structured JSON summary of results\n"
+                        "6. Clearly states whether each hypothesis is supported, rejected, or inconclusive"
+                        f"{seed_instruction}"
+                    ),
+                }
+            ],
             system=(
                 "You are a biostatistician. Use appropriate tests. "
                 "Always report effect sizes. Apply multiple comparison correction. "
@@ -507,18 +650,14 @@ class ResearchExecutor:
         script_path = session.session_dir / "analysis" / "scripts" / "statistical_tests.py"
         script_path.write_text(code)
 
-        # Execute
-        import subprocess
-        result = subprocess.run(
-            ["python", str(script_path)],
-            capture_output=True,
-            text=True,
-            timeout=300,
-            cwd=str(session.session_dir),
+        result = await self._sandbox(session).run_python(
+            script_path,
+            workspace=session.session_dir,
+            timeout_seconds=300,
         )
 
         findings = []
-        if result.returncode == 0:
+        if result.returncode == 0 and not result.timed_out:
             try:
                 findings = json.loads(result.stdout)
                 if isinstance(findings, dict):
@@ -527,9 +666,18 @@ class ResearchExecutor:
                 findings = [{"raw_output": result.stdout[:2000]}]
 
         return (
-            f"Statistical testing {'completed' if result.returncode == 0 else 'failed'}",
+            (
+                "Statistical testing completed"
+                if result.returncode == 0 and not result.timed_out
+                else "Statistical testing failed"
+            ),
             findings,
         )
+
+    @staticmethod
+    def _sandbox(session: Session) -> ExecutionSandbox:
+        mode = session.mission.metadata.get("sandbox_mode")
+        return ExecutionSandbox(SandboxPolicy.from_environment(mode=mode))
 
     async def _draft_manuscript(
         self, session: Session, plan: ResearchPlan
@@ -585,27 +733,30 @@ class ResearchExecutor:
 
         for section in sections:
             resp = await self.llm.complete(
-                messages=[{"role": "user", "content": (
-                    f"Write the {section.upper()} section of a scientific paper.\n\n"
-                    f"Research objective: {session.mission.objective}\n"
-                    f"Domain: {session.mission.domain}\n"
-                    f"Approach: {plan.approach}\n\n"
-                    f"Literature context: {len(session.literature_corpus)} papers reviewed\n"
-                    f"Datasets used: {len(session.datasets)}\n\n"
-                    f"DATA INVENTORY (ground truth — only report what appears here):\n"
-                    f"{data_inventory}\n\n"
-                    "Write in clear, precise scientific prose. "
-                    "Be specific about methods and results. "
-                    "Acknowledge limitations in the discussion. "
-                    "If no data supports a claim, state that explicitly rather than inventing data."
-                )}],
+                messages=[
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Write the {section.upper()} section of a scientific paper.\n\n"
+                            f"Research objective: {session.mission.objective}\n"
+                            f"Domain: {session.mission.domain}\n"
+                            f"Approach: {plan.approach}\n\n"
+                            f"Literature context: {len(session.literature_corpus)} papers reviewed\n"
+                            f"Datasets used: {len(session.datasets)}\n\n"
+                            f"DATA INVENTORY (ground truth — only report what appears here):\n"
+                            f"{data_inventory}\n\n"
+                            "Write in clear, precise scientific prose. "
+                            "Be specific about methods and results. "
+                            "Acknowledge limitations in the discussion. "
+                            "If no data supports a claim, state that explicitly rather than inventing data."
+                        ),
+                    }
+                ],
                 system=system_prompt,
             )
 
             manuscript_parts[section] = resp.text
-            session.cost.record_llm_call(
-                resp.input_tokens, resp.output_tokens, resp.cost_usd
-            )
+            session.cost.record_llm_call(resp.input_tokens, resp.output_tokens, resp.cost_usd)
 
         # Assemble manuscript
         manuscript = self._assemble_latex(session, plan, manuscript_parts)
@@ -621,8 +772,13 @@ class ResearchExecutor:
 
         return (
             "Manuscript draft completed",
-            [{"type": "manuscript", "sections": list(manuscript_parts.keys()),
-              "evidence_level": evidence_level}],
+            [
+                {
+                    "type": "manuscript",
+                    "sections": list(manuscript_parts.keys()),
+                    "evidence_level": evidence_level,
+                }
+            ],
         )
 
     async def _self_review(
@@ -644,20 +800,25 @@ class ResearchExecutor:
         manuscript_text = manuscript_path.read_text() if manuscript_path.exists() else ""
 
         review_resp = await self.llm.complete(
-            messages=[{"role": "user", "content": (
-                f"Critically review this research manuscript:\n\n"
-                f"{manuscript_text[:8000]}\n\n"
-                "Evaluate:\n"
-                "1. Statistical validity — are tests appropriate? Are results correctly interpreted?\n"
-                "2. Methodological soundness — are methods appropriate for the research question?\n"
-                "3. Data quality — are there concerns about the data sources used?\n"
-                "4. Logical consistency — do conclusions follow from results?\n"
-                "5. Overstatement — are claims proportional to evidence?\n"
-                "6. Missing limitations — what should be acknowledged?\n"
-                "7. Reproducibility — could someone replicate this?\n"
-                "8. Novelty — does this add meaningful knowledge?\n\n"
-                "Be ruthlessly honest. This is an internal quality check."
-            )}],
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        f"Critically review this research manuscript:\n\n"
+                        f"{manuscript_text[:8000]}\n\n"
+                        "Evaluate:\n"
+                        "1. Statistical validity — are tests appropriate? Are results correctly interpreted?\n"
+                        "2. Methodological soundness — are methods appropriate for the research question?\n"
+                        "3. Data quality — are there concerns about the data sources used?\n"
+                        "4. Logical consistency — do conclusions follow from results?\n"
+                        "5. Overstatement — are claims proportional to evidence?\n"
+                        "6. Missing limitations — what should be acknowledged?\n"
+                        "7. Reproducibility — could someone replicate this?\n"
+                        "8. Novelty — does this add meaningful knowledge?\n\n"
+                        "Be ruthlessly honest. This is an internal quality check."
+                    ),
+                }
+            ],
             system=(
                 "You are a harsh but fair peer reviewer. "
                 "Your job is to find problems before external reviewers do. "
@@ -713,19 +874,24 @@ class ResearchExecutor:
         data_inventory = self._build_data_inventory(session)
 
         resp = await self.llm.complete(
-            messages=[{"role": "user", "content": (
-                "Revise this manuscript to address every criticism from the self-review.\n\n"
-                f"SELF-REVIEW:\n{review_text[:6000]}\n\n"
-                f"CURRENT MANUSCRIPT:\n{manuscript_text[:12000]}\n\n"
-                f"DATA INVENTORY (ground truth):\n{data_inventory[:6000]}\n\n"
-                "For each criticism:\n"
-                "- If data exists to address it, add the data\n"
-                "- If no data exists, remove the unsupported claim and note the limitation\n"
-                "- Fix all statistical errors identified\n"
-                "- Restate overstatements with appropriate hedging\n"
-                "- Add missing limitations\n\n"
-                "Output the complete revised manuscript in markdown."
-            )}],
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        "Revise this manuscript to address every criticism from the self-review.\n\n"
+                        f"SELF-REVIEW:\n{review_text[:6000]}\n\n"
+                        f"CURRENT MANUSCRIPT:\n{manuscript_text[:12000]}\n\n"
+                        f"DATA INVENTORY (ground truth):\n{data_inventory[:6000]}\n\n"
+                        "For each criticism:\n"
+                        "- If data exists to address it, add the data\n"
+                        "- If no data exists, remove the unsupported claim and note the limitation\n"
+                        "- Fix all statistical errors identified\n"
+                        "- Restate overstatements with appropriate hedging\n"
+                        "- Add missing limitations\n\n"
+                        "Output the complete revised manuscript in markdown."
+                    ),
+                }
+            ],
             system=(
                 "You are revising a scientific manuscript based on peer review feedback. "
                 "NEVER fabricate data to address a criticism. If the reviewer says data is missing, "
@@ -734,9 +900,7 @@ class ResearchExecutor:
             ),
         )
 
-        session.cost.record_llm_call(
-            resp.input_tokens, resp.output_tokens, resp.cost_usd
-        )
+        session.cost.record_llm_call(resp.input_tokens, resp.output_tokens, resp.cost_usd)
 
         # Overwrite manuscript markdown
         manuscript_path.write_text(resp.text)
@@ -791,7 +955,9 @@ class ResearchExecutor:
             try:
                 data = json.loads(f.read_text())
                 if isinstance(data, dict):
-                    record_counts = {k: len(v) if isinstance(v, list) else 1 for k, v in data.items()}
+                    record_counts = {
+                        k: len(v) if isinstance(v, list) else 1 for k, v in data.items()
+                    }
                     preview = json.dumps(data, indent=2, default=str)[:2000]
                 elif isinstance(data, list):
                     record_counts = {"records": len(data)}
@@ -831,7 +997,9 @@ class ResearchExecutor:
             )
 
         if not inventory_parts:
-            return "NO DATA AVAILABLE. All sections must state that no empirical data was collected."
+            return (
+                "NO DATA AVAILABLE. All sections must state that no empirical data was collected."
+            )
 
         return "\n".join(inventory_parts)
 
@@ -855,6 +1023,7 @@ class ResearchExecutor:
     def _extract_code(self, text: str) -> str:
         """Extract Python code from LLM response."""
         import re
+
         text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
         if "```python" in text:
             return text.split("```python")[1].split("```")[0].strip()
@@ -895,9 +1064,7 @@ class ResearchExecutor:
             "\\end{document}\n"
         )
 
-    async def _assess_translation_potential(
-        self, session: Session
-    ) -> dict[str, float]:
+    async def _assess_translation_potential(self, session: Session) -> dict[str, float]:
         """
         Assess translation potential of research findings.
 
@@ -909,32 +1076,39 @@ class ResearchExecutor:
         manuscript_text = manuscript_path.read_text()[:4000] if manuscript_path.exists() else ""
 
         resp = await self.llm.complete(
-            messages=[{"role": "user", "content": (
-                f"Assess the translation potential of these research findings:\n\n"
-                f"Objective: {session.mission.objective}\n"
-                f"Key findings: {', '.join(session.key_findings[:5])}\n\n"
-                f"Manuscript excerpt:\n{manuscript_text[:3000]}\n\n"
-                "Score each dimension 0-10:\n"
-                "1. Commercial relevance — market demand, willingness to pay\n"
-                "2. Implementation feasibility — can this be built today?\n"
-                "3. Novelty — differentiation from existing solutions\n\n"
-                'Respond ONLY with JSON: {"commercial_relevance": <0-10>, '
-                '"implementation_feasibility": <0-10>, "novelty": <0-10>}'
-            )}],
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        f"Assess the translation potential of these research findings:\n\n"
+                        f"Objective: {session.mission.objective}\n"
+                        f"Key findings: {', '.join(session.key_findings[:5])}\n\n"
+                        f"Manuscript excerpt:\n{manuscript_text[:3000]}\n\n"
+                        "Score each dimension 0-10:\n"
+                        "1. Commercial relevance — market demand, willingness to pay\n"
+                        "2. Implementation feasibility — can this be built today?\n"
+                        "3. Novelty — differentiation from existing solutions\n\n"
+                        'Respond ONLY with JSON: {"commercial_relevance": <0-10>, '
+                        '"implementation_feasibility": <0-10>, "novelty": <0-10>}'
+                    ),
+                }
+            ],
             system=(
                 "You are a technology transfer specialist assessing research "
                 "findings for commercial translation. Be realistic."
             ),
         )
 
-        session.cost.record_llm_call(
-            resp.input_tokens, resp.output_tokens, resp.cost_usd
-        )
+        session.cost.record_llm_call(resp.input_tokens, resp.output_tokens, resp.cost_usd)
 
         try:
             scores = json.loads(self._extract_json(resp.text))
         except (json.JSONDecodeError, ValueError):
-            scores = {"commercial_relevance": 5.0, "implementation_feasibility": 5.0, "novelty": 5.0}
+            scores = {
+                "commercial_relevance": 5.0,
+                "implementation_feasibility": 5.0,
+                "novelty": 5.0,
+            }
 
         cr = float(scores.get("commercial_relevance", 5.0))
         if_ = float(scores.get("implementation_feasibility", 5.0))
@@ -951,6 +1125,7 @@ class ResearchExecutor:
     def _extract_json(text: str) -> str:
         """Extract JSON from LLM response."""
         import re
+
         text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
         if "```json" in text:
             return text.split("```json")[1].split("```")[0].strip()
@@ -969,31 +1144,36 @@ class ResearchExecutor:
         data_inventory = self._build_data_inventory(session)
 
         resp = await self.llm.complete(
-            messages=[{"role": "user", "content": (
-                "Audit the statistical claims in this manuscript against the actual data.\n\n"
-                f"MANUSCRIPT:\n{manuscript_text}\n\n"
-                f"DATA INVENTORY:\n{data_inventory[:4000]}\n\n"
-                "Check each of these and respond ONLY with JSON:\n"
-                "1. multiple_comparisons — was correction applied when needed?\n"
-                "2. effect_sizes — are they reported with CIs?\n"
-                "3. sample_sizes — adequate for claims made?\n"
-                "4. assumptions — are statistical test assumptions met?\n"
-                "5. fabrication_check — do all numbers in manuscript match data inventory?\n\n"
-                '{"checks": [{"name": "...", "status": "pass|fail|not_applicable", "note": "..."}], '
-                '"overall": "pass|pass_with_notes|fail", "fabrication_detected": true/false}'
-            )}],
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        "Audit the statistical claims in this manuscript against the actual data.\n\n"
+                        f"MANUSCRIPT:\n{manuscript_text}\n\n"
+                        f"DATA INVENTORY:\n{data_inventory[:4000]}\n\n"
+                        "Check each of these and respond ONLY with JSON:\n"
+                        "1. multiple_comparisons — was correction applied when needed?\n"
+                        "2. effect_sizes — are they reported with CIs?\n"
+                        "3. sample_sizes — adequate for claims made?\n"
+                        "4. assumptions — are statistical test assumptions met?\n"
+                        "5. fabrication_check — do all numbers in manuscript match data inventory?\n\n"
+                        '{"checks": [{"name": "...", "status": "pass|fail|not_applicable", "note": "..."}], '
+                        '"overall": "pass|pass_with_notes|fail", "fabrication_detected": true/false}'
+                    ),
+                }
+            ],
             system="You are a statistical auditor. Be strict. Flag any number in the manuscript not traceable to the data inventory.",
         )
 
-        session.cost.record_llm_call(
-            resp.input_tokens, resp.output_tokens, resp.cost_usd
-        )
+        session.cost.record_llm_call(resp.input_tokens, resp.output_tokens, resp.cost_usd)
 
         try:
             audit = json.loads(self._extract_json(resp.text))
         except (json.JSONDecodeError, ValueError):
             audit = {
-                "checks": [{"name": "audit_failed", "status": "fail", "note": "Could not parse audit"}],
+                "checks": [
+                    {"name": "audit_failed", "status": "fail", "note": "Could not parse audit"}
+                ],
                 "overall": "fail",
             }
 

@@ -109,6 +109,7 @@ EDGAR_JSON = {
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _mock_http(responses: dict[str, httpx.Response]):
     async def _get(url, params=None, **kwargs):
         for key, resp in responses.items():
@@ -130,6 +131,7 @@ def _mock_http(responses: dict[str, httpx.Response]):
 
 def _response(text: str = "", json_data: dict | list | None = None, status: int = 200):
     import json as _json
+
     resp = httpx.Response(status_code=status, request=httpx.Request("GET", "http://test"))
     if json_data is not None:
         resp._content = _json.dumps(json_data).encode()
@@ -142,13 +144,16 @@ def _response(text: str = "", json_data: dict | list | None = None, status: int 
 # FRED tests
 # ---------------------------------------------------------------------------
 
+
 class TestFredFallback:
     @pytest.mark.asyncio
     @patch.dict(os.environ, {"FRED_API_KEY": "test-fred-key"})
     async def test_basic_search(self):
-        http = _mock_http({
-            "series/search": _response(json_data=FRED_SEARCH_JSON),
-        })
+        http = _mock_http(
+            {
+                "series/search": _response(json_data=FRED_SEARCH_JSON),
+            }
+        )
         result = await _fred_search(
             "https://api.stlouisfed.org/fred",
             {"query": "GDP"},
@@ -164,9 +169,11 @@ class TestFredFallback:
     @pytest.mark.asyncio
     @patch.dict(os.environ, {"FRED_API_KEY": "test-fred-key"})
     async def test_observations(self):
-        http = _mock_http({
-            "series/observations": _response(json_data=FRED_OBS_JSON),
-        })
+        http = _mock_http(
+            {
+                "series/observations": _response(json_data=FRED_OBS_JSON),
+            }
+        )
         result = await _fred_search(
             "https://api.stlouisfed.org/fred",
             {"series_id": "GDP"},
@@ -192,9 +199,11 @@ class TestFredFallback:
     @pytest.mark.asyncio
     @patch.dict(os.environ, {"FRED_API_KEY": "test-fred-key"})
     async def test_empty_results(self):
-        http = _mock_http({
-            "series/search": _response(json_data={"seriess": []}),
-        })
+        http = _mock_http(
+            {
+                "series/search": _response(json_data={"seriess": []}),
+            }
+        )
         result = await _fred_search(
             "https://api.stlouisfed.org/fred",
             {"query": "zzzzz"},
@@ -207,12 +216,15 @@ class TestFredFallback:
 # World Bank tests
 # ---------------------------------------------------------------------------
 
+
 class TestWorldBankFallback:
     @pytest.mark.asyncio
     async def test_basic_search(self):
-        http = _mock_http({
-            "indicator": _response(json_data=WB_INDICATOR_SEARCH_JSON),
-        })
+        http = _mock_http(
+            {
+                "indicator": _response(json_data=WB_INDICATOR_SEARCH_JSON),
+            }
+        )
         result = await _world_bank_search(
             "https://api.worldbank.org/v2",
             {"query": "GDP"},
@@ -225,9 +237,11 @@ class TestWorldBankFallback:
 
     @pytest.mark.asyncio
     async def test_indicator_data(self):
-        http = _mock_http({
-            "indicator/NY.GDP.MKTP.CD": _response(json_data=WB_DATA_JSON),
-        })
+        http = _mock_http(
+            {
+                "indicator/NY.GDP.MKTP.CD": _response(json_data=WB_DATA_JSON),
+            }
+        )
         result = await _world_bank_search(
             "https://api.worldbank.org/v2",
             {"indicator": "NY.GDP.MKTP.CD", "country": "US"},
@@ -241,9 +255,11 @@ class TestWorldBankFallback:
 
     @pytest.mark.asyncio
     async def test_empty_results(self):
-        http = _mock_http({
-            "indicator": _response(json_data=[{"page": 1}, None]),
-        })
+        http = _mock_http(
+            {
+                "indicator": _response(json_data=[{"page": 1}, None]),
+            }
+        )
         result = await _world_bank_search(
             "https://api.worldbank.org/v2",
             {"query": "zzzzz"},
@@ -254,9 +270,11 @@ class TestWorldBankFallback:
     @pytest.mark.asyncio
     async def test_missing_fields(self):
         data = [{"page": 1}, [{"id": "XX.1", "name": "Test metric XX"}]]
-        http = _mock_http({
-            "indicator": _response(json_data=data),
-        })
+        http = _mock_http(
+            {
+                "indicator": _response(json_data=data),
+            }
+        )
         result = await _world_bank_search(
             "https://api.worldbank.org/v2",
             {"query": "XX"},
@@ -269,12 +287,15 @@ class TestWorldBankFallback:
 # BLS tests
 # ---------------------------------------------------------------------------
 
+
 class TestBlsFallback:
     @pytest.mark.asyncio
     async def test_basic_search(self):
-        http = _mock_http({
-            "timeseries/data": _response(json_data=BLS_JSON),
-        })
+        http = _mock_http(
+            {
+                "timeseries/data": _response(json_data=BLS_JSON),
+            }
+        )
         result = await _bls_search(
             "https://api.bls.gov/publicAPI/v2",
             {"series_ids": ["CES0000000001"]},
@@ -302,9 +323,11 @@ class TestBlsFallback:
 
     @pytest.mark.asyncio
     async def test_empty_results(self):
-        http = _mock_http({
-            "timeseries/data": _response(json_data={"Results": {"series": []}}),
-        })
+        http = _mock_http(
+            {
+                "timeseries/data": _response(json_data={"Results": {"series": []}}),
+            }
+        )
         result = await _bls_search(
             "https://api.bls.gov/publicAPI/v2",
             {"series_ids": ["INVALID"]},
@@ -317,12 +340,15 @@ class TestBlsFallback:
 # SEC EDGAR tests
 # ---------------------------------------------------------------------------
 
+
 class TestSecEdgarFallback:
     @pytest.mark.asyncio
     async def test_basic_search(self):
-        http = _mock_http({
-            "search-index": _response(json_data=EDGAR_JSON),
-        })
+        http = _mock_http(
+            {
+                "search-index": _response(json_data=EDGAR_JSON),
+            }
+        )
         result = await _sec_edgar_search(
             "https://efts.sec.gov/LATEST",
             {"query": "Apple"},
@@ -337,9 +363,11 @@ class TestSecEdgarFallback:
 
     @pytest.mark.asyncio
     async def test_empty_results(self):
-        http = _mock_http({
-            "search-index": _response(json_data={"hits": {"hits": []}}, status=200),
-        })
+        http = _mock_http(
+            {
+                "search-index": _response(json_data={"hits": {"hits": []}}, status=200),
+            }
+        )
         result = await _sec_edgar_search(
             "https://efts.sec.gov/LATEST",
             {"query": "zzzzz"},
@@ -350,9 +378,11 @@ class TestSecEdgarFallback:
     @pytest.mark.asyncio
     async def test_missing_fields(self):
         """Entry with fallback field names (entity_name, file_type, etc.)."""
-        http = _mock_http({
-            "search-index": _response(json_data=EDGAR_JSON),
-        })
+        http = _mock_http(
+            {
+                "search-index": _response(json_data=EDGAR_JSON),
+            }
+        )
         result = await _sec_edgar_search(
             "https://efts.sec.gov/LATEST",
             {"query": "Google"},

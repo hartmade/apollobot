@@ -13,6 +13,7 @@ import httpx
 
 from ._base import (
     FallbackHandler,
+    apollobot_user_agent,
     extract_query,
     get_with_retry,
     post_with_retry,
@@ -26,6 +27,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # FRED (Federal Reserve Economic Data) — requires FRED_API_KEY
 # ---------------------------------------------------------------------------
+
 
 async def _fred_search(
     api_base: str,
@@ -55,10 +57,12 @@ async def _fred_search(
         data = resp.json()
         observations = []
         for obs in data.get("observations", []):
-            observations.append({
-                "date": obs.get("date", ""),
-                "value": obs.get("value", ""),
-            })
+            observations.append(
+                {
+                    "date": obs.get("date", ""),
+                    "value": obs.get("value", ""),
+                }
+            )
         return {
             "series_id": series_id,
             "observations": observations,
@@ -81,13 +85,15 @@ async def _fred_search(
 
     series = []
     for s in data.get("seriess", []):
-        series.append({
-            "series_id": s.get("id", ""),
-            "title": s.get("title", ""),
-            "frequency": s.get("frequency", ""),
-            "units": s.get("units", ""),
-            "source": "fred",
-        })
+        series.append(
+            {
+                "series_id": s.get("id", ""),
+                "title": s.get("title", ""),
+                "frequency": s.get("frequency", ""),
+                "units": s.get("units", ""),
+                "source": "fred",
+            }
+        )
 
     logger.info("FRED fallback: %d series for query=%r", len(series), query)
     return {"series": series}
@@ -96,6 +102,7 @@ async def _fred_search(
 # ---------------------------------------------------------------------------
 # World Bank — Open Data API
 # ---------------------------------------------------------------------------
+
 
 async def _world_bank_search(
     api_base: str,
@@ -125,13 +132,15 @@ async def _world_bank_search(
 
         indicators = []
         for rec in records:
-            indicators.append({
-                "country": rec.get("country", {}).get("value", ""),
-                "indicator": rec.get("indicator", {}).get("value", ""),
-                "year": safe_int(rec.get("date")),
-                "value": rec.get("value"),
-                "source": "world-bank",
-            })
+            indicators.append(
+                {
+                    "country": rec.get("country", {}).get("value", ""),
+                    "indicator": rec.get("indicator", {}).get("value", ""),
+                    "year": safe_int(rec.get("date")),
+                    "value": rec.get("value"),
+                    "source": "world-bank",
+                }
+            )
 
         logger.info("World Bank fallback: %d records for indicator=%r", len(indicators), indicator)
         return {"indicators": indicators}
@@ -156,11 +165,13 @@ async def _world_bank_search(
         name = item.get("name", "")
         if query_lower and query_lower not in name.lower():
             continue
-        indicators.append({
-            "indicator_id": item.get("id", ""),
-            "name": name,
-            "source": "world-bank",
-        })
+        indicators.append(
+            {
+                "indicator_id": item.get("id", ""),
+                "name": name,
+                "source": "world-bank",
+            }
+        )
 
     logger.info("World Bank fallback: %d indicators for query=%r", len(indicators), query)
     return {"indicators": indicators}
@@ -169,6 +180,7 @@ async def _world_bank_search(
 # ---------------------------------------------------------------------------
 # BLS (Bureau of Labor Statistics) — uses POST
 # ---------------------------------------------------------------------------
+
 
 async def _bls_search(
     api_base: str,
@@ -219,16 +231,20 @@ async def _bls_search(
     for result in data.get("Results", {}).get("series", []):
         observations = []
         for obs in result.get("data", []):
-            observations.append({
-                "year": obs.get("year", ""),
-                "period": obs.get("period", ""),
-                "value": obs.get("value", ""),
-            })
-        series.append({
-            "series_id": result.get("seriesID", ""),
-            "observations": observations,
-            "source": "bls",
-        })
+            observations.append(
+                {
+                    "year": obs.get("year", ""),
+                    "period": obs.get("period", ""),
+                    "value": obs.get("value", ""),
+                }
+            )
+        series.append(
+            {
+                "series_id": result.get("seriesID", ""),
+                "observations": observations,
+                "source": "bls",
+            }
+        )
 
     logger.info("BLS fallback: %d series returned", len(series))
     return {"series": series}
@@ -237,6 +253,7 @@ async def _bls_search(
 # ---------------------------------------------------------------------------
 # SEC EDGAR — full-text search API
 # ---------------------------------------------------------------------------
+
 
 async def _sec_edgar_search(
     api_base: str,
@@ -263,7 +280,7 @@ async def _sec_edgar_search(
         f"{api_base}/search-index",
         params=search_params,
         headers={
-            "User-Agent": "ApolloBot/0.1 (research@frontierscience.ai)",
+            "User-Agent": apollobot_user_agent(),
             "Accept": "application/json",
         },
     )
@@ -277,13 +294,17 @@ async def _sec_edgar_search(
     filings = []
     for hit in hits[:limit]:
         src = hit.get("_source", {})
-        filings.append({
-            "accession_number": src.get("file_num", src.get("accession_no", "")),
-            "company_name": src.get("display_names", [""])[0] if src.get("display_names") else src.get("entity_name", ""),
-            "form_type": src.get("form_type", src.get("file_type", "")),
-            "filing_date": src.get("file_date", src.get("period_of_report", "")),
-            "source": "sec-edgar",
-        })
+        filings.append(
+            {
+                "accession_number": src.get("file_num", src.get("accession_no", "")),
+                "company_name": src.get("display_names", [""])[0]
+                if src.get("display_names")
+                else src.get("entity_name", ""),
+                "form_type": src.get("form_type", src.get("file_type", "")),
+                "filing_date": src.get("file_date", src.get("period_of_report", "")),
+                "source": "sec-edgar",
+            }
+        )
 
     logger.info("SEC EDGAR fallback: %d filings for query=%r", len(filings), query)
     return {"filings": filings}

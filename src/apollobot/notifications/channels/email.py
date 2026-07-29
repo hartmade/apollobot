@@ -57,10 +57,14 @@ class EmailChannel(NotificationChannel):
         now = time.monotonic()
 
         # Always send immediately for critical events and session summaries
-        if event.event_type in (
-            EventType.SESSION_COMPLETED,
-            EventType.SESSION_FAILED,
-        ) or event.severity == EventSeverity.CRITICAL:
+        if (
+            event.event_type
+            in (
+                EventType.SESSION_COMPLETED,
+                EventType.SESSION_FAILED,
+            )
+            or event.severity == EventSeverity.CRITICAL
+        ):
             # Flush any pending events along with this one
             events_to_send = self._pending + [event]
             self._pending = []

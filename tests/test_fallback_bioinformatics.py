@@ -67,9 +67,7 @@ UNIPROT_JSON = {
         {
             "primaryAccession": "P04637",
             "proteinDescription": {
-                "recommendedName": {
-                    "fullName": {"value": "Cellular tumor antigen p53"}
-                }
+                "recommendedName": {"fullName": {"value": "Cellular tumor antigen p53"}}
             },
             "organism": {"scientificName": "Homo sapiens"},
             "genes": [{"geneName": {"value": "TP53"}}],
@@ -77,11 +75,7 @@ UNIPROT_JSON = {
         },
         {
             "primaryAccession": "Q9Y6K9",
-            "proteinDescription": {
-                "submissionNames": [
-                    {"fullName": {"value": "Unknown protein"}}
-                ]
-            },
+            "proteinDescription": {"submissionNames": [{"fullName": {"value": "Unknown protein"}}]},
             "organism": {"scientificName": "Homo sapiens"},
             "genes": [],
             "sequence": {"length": 100},
@@ -107,7 +101,9 @@ ENSEMBL_JSON = [
     },
 ]
 
-KEGG_TEXT = "hsa:7157\tTP53; tumor protein p53\nhsa:7158\tTP53I3; tumor protein p53 inducible protein 3\n"
+KEGG_TEXT = (
+    "hsa:7157\tTP53; tumor protein p53\nhsa:7158\tTP53I3; tumor protein p53 inducible protein 3\n"
+)
 
 PDB_SEARCH_JSON = {
     "result_set": [
@@ -135,8 +131,10 @@ PDB_ENTRY_2XWR = {
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _mock_http(responses: dict[str, httpx.Response]):
     """Create a mock httpx client whose .get()/.post() dispatch by URL substring."""
+
     async def _get(url, params=None, **kwargs):
         for key, resp in responses.items():
             if key in str(url):
@@ -157,6 +155,7 @@ def _mock_http(responses: dict[str, httpx.Response]):
 
 def _response(text: str = "", json_data: dict | list | None = None, status: int = 200):
     import json as _json
+
     resp = httpx.Response(status_code=status, request=httpx.Request("GET", "http://test"))
     if json_data is not None:
         resp._content = _json.dumps(json_data).encode()
@@ -169,13 +168,16 @@ def _response(text: str = "", json_data: dict | list | None = None, status: int 
 # GEO tests
 # ---------------------------------------------------------------------------
 
+
 class TestGeoFallback:
     @pytest.mark.asyncio
     async def test_basic_search(self):
-        http = _mock_http({
-            "esearch": _response(json_data=GEO_SEARCH_JSON),
-            "esummary": _response(json_data=GEO_SUMMARY_JSON),
-        })
+        http = _mock_http(
+            {
+                "esearch": _response(json_data=GEO_SEARCH_JSON),
+                "esummary": _response(json_data=GEO_SUMMARY_JSON),
+            }
+        )
         result = await _geo_search(
             "https://eutils.ncbi.nlm.nih.gov/entrez/eutils",
             {"query": "RNA-seq tumor"},
@@ -191,9 +193,11 @@ class TestGeoFallback:
 
     @pytest.mark.asyncio
     async def test_empty_results(self):
-        http = _mock_http({
-            "esearch": _response(json_data={"esearchresult": {"idlist": []}}),
-        })
+        http = _mock_http(
+            {
+                "esearch": _response(json_data={"esearchresult": {"idlist": []}}),
+            }
+        )
         result = await _geo_search(
             "https://eutils.ncbi.nlm.nih.gov/entrez/eutils",
             {"query": "zzzzz"},
@@ -204,10 +208,12 @@ class TestGeoFallback:
     @pytest.mark.asyncio
     async def test_missing_fields(self):
         summary = {"result": {"111": {"accession": "GSE111", "title": "Minimal"}}}
-        http = _mock_http({
-            "esearch": _response(json_data={"esearchresult": {"idlist": ["111"]}}),
-            "esummary": _response(json_data=summary),
-        })
+        http = _mock_http(
+            {
+                "esearch": _response(json_data={"esearchresult": {"idlist": ["111"]}}),
+                "esummary": _response(json_data=summary),
+            }
+        )
         result = await _geo_search(
             "https://eutils.ncbi.nlm.nih.gov/entrez/eutils",
             {"query": "test"},
@@ -221,13 +227,16 @@ class TestGeoFallback:
 # GenBank tests
 # ---------------------------------------------------------------------------
 
+
 class TestGenbankFallback:
     @pytest.mark.asyncio
     async def test_basic_search(self):
-        http = _mock_http({
-            "esearch": _response(json_data=GENBANK_SEARCH_JSON),
-            "esummary": _response(json_data=GENBANK_SUMMARY_JSON),
-        })
+        http = _mock_http(
+            {
+                "esearch": _response(json_data=GENBANK_SEARCH_JSON),
+                "esummary": _response(json_data=GENBANK_SUMMARY_JSON),
+            }
+        )
         result = await _genbank_search(
             "https://eutils.ncbi.nlm.nih.gov/entrez/eutils",
             {"query": "TP53"},
@@ -242,9 +251,11 @@ class TestGenbankFallback:
 
     @pytest.mark.asyncio
     async def test_empty_results(self):
-        http = _mock_http({
-            "esearch": _response(json_data={"esearchresult": {"idlist": []}}),
-        })
+        http = _mock_http(
+            {
+                "esearch": _response(json_data={"esearchresult": {"idlist": []}}),
+            }
+        )
         result = await _genbank_search(
             "https://eutils.ncbi.nlm.nih.gov/entrez/eutils",
             {"query": "zzzzz"},
@@ -255,10 +266,12 @@ class TestGenbankFallback:
     @pytest.mark.asyncio
     async def test_missing_fields(self):
         summary = {"result": {"111": {"caption": "ABC123"}}}
-        http = _mock_http({
-            "esearch": _response(json_data={"esearchresult": {"idlist": ["111"]}}),
-            "esummary": _response(json_data=summary),
-        })
+        http = _mock_http(
+            {
+                "esearch": _response(json_data={"esearchresult": {"idlist": ["111"]}}),
+                "esummary": _response(json_data=summary),
+            }
+        )
         result = await _genbank_search(
             "https://eutils.ncbi.nlm.nih.gov/entrez/eutils",
             {"query": "test"},
@@ -272,12 +285,15 @@ class TestGenbankFallback:
 # UniProt tests
 # ---------------------------------------------------------------------------
 
+
 class TestUniprotFallback:
     @pytest.mark.asyncio
     async def test_basic_search(self):
-        http = _mock_http({
-            "uniprotkb/search": _response(json_data=UNIPROT_JSON),
-        })
+        http = _mock_http(
+            {
+                "uniprotkb/search": _response(json_data=UNIPROT_JSON),
+            }
+        )
         result = await _uniprot_search("https://rest.uniprot.org", {"query": "p53"}, http)
         proteins = result["proteins"]
         assert len(proteins) == 2
@@ -289,18 +305,22 @@ class TestUniprotFallback:
 
     @pytest.mark.asyncio
     async def test_empty_results(self):
-        http = _mock_http({
-            "uniprotkb/search": _response(json_data={"results": []}),
-        })
+        http = _mock_http(
+            {
+                "uniprotkb/search": _response(json_data={"results": []}),
+            }
+        )
         result = await _uniprot_search("https://rest.uniprot.org", {"query": "zzzzz"}, http)
         assert result["proteins"] == []
 
     @pytest.mark.asyncio
     async def test_missing_fields(self):
         """Protein with submissionNames instead of recommendedName."""
-        http = _mock_http({
-            "uniprotkb/search": _response(json_data=UNIPROT_JSON),
-        })
+        http = _mock_http(
+            {
+                "uniprotkb/search": _response(json_data=UNIPROT_JSON),
+            }
+        )
         result = await _uniprot_search("https://rest.uniprot.org", {"query": "test"}, http)
         assert result["proteins"][1]["protein_name"] == "Unknown protein"
         assert result["proteins"][1]["gene_names"] == []
@@ -310,15 +330,16 @@ class TestUniprotFallback:
 # Ensembl tests
 # ---------------------------------------------------------------------------
 
+
 class TestEnsemblFallback:
     @pytest.mark.asyncio
     async def test_basic_search(self):
-        http = _mock_http({
-            "xrefs/symbol": _response(json_data=ENSEMBL_JSON),
-        })
-        result = await _ensembl_search(
-            "https://rest.ensembl.org", {"query": "TP53"}, http
+        http = _mock_http(
+            {
+                "xrefs/symbol": _response(json_data=ENSEMBL_JSON),
+            }
         )
+        result = await _ensembl_search("https://rest.ensembl.org", {"query": "TP53"}, http)
         genes = result["genes"]
         # Should deduplicate by ID
         assert len(genes) == 2
@@ -328,23 +349,23 @@ class TestEnsemblFallback:
 
     @pytest.mark.asyncio
     async def test_empty_results(self):
-        http = _mock_http({
-            "xrefs/symbol": _response(json_data=[], status=400),
-        })
-        result = await _ensembl_search(
-            "https://rest.ensembl.org", {"query": "ZZZZ"}, http
+        http = _mock_http(
+            {
+                "xrefs/symbol": _response(json_data=[], status=400),
+            }
         )
+        result = await _ensembl_search("https://rest.ensembl.org", {"query": "ZZZZ"}, http)
         assert result["genes"] == []
 
     @pytest.mark.asyncio
     async def test_missing_fields(self):
         data = [{"id": "ENS001"}]
-        http = _mock_http({
-            "xrefs/symbol": _response(json_data=data),
-        })
-        result = await _ensembl_search(
-            "https://rest.ensembl.org", {"query": "X"}, http
+        http = _mock_http(
+            {
+                "xrefs/symbol": _response(json_data=data),
+            }
         )
+        result = await _ensembl_search("https://rest.ensembl.org", {"query": "X"}, http)
         assert result["genes"][0]["description"] == ""
         assert result["genes"][0]["biotype"] == ""
 
@@ -353,12 +374,15 @@ class TestEnsemblFallback:
 # KEGG tests
 # ---------------------------------------------------------------------------
 
+
 class TestKeggFallback:
     @pytest.mark.asyncio
     async def test_basic_search(self):
-        http = _mock_http({
-            "find/pathway": _response(text=KEGG_TEXT),
-        })
+        http = _mock_http(
+            {
+                "find/pathway": _response(text=KEGG_TEXT),
+            }
+        )
         result = await _kegg_search("https://rest.kegg.jp", {"query": "TP53"}, http)
         entries = result["entries"]
         assert len(entries) == 2
@@ -368,17 +392,21 @@ class TestKeggFallback:
 
     @pytest.mark.asyncio
     async def test_empty_results(self):
-        http = _mock_http({
-            "find/pathway": _response(text="", status=404),
-        })
+        http = _mock_http(
+            {
+                "find/pathway": _response(text="", status=404),
+            }
+        )
         result = await _kegg_search("https://rest.kegg.jp", {"query": "zzzzz"}, http)
         assert result["entries"] == []
 
     @pytest.mark.asyncio
     async def test_missing_fields(self):
-        http = _mock_http({
-            "find/pathway": _response(text="hsa:9999\n"),
-        })
+        http = _mock_http(
+            {
+                "find/pathway": _response(text="hsa:9999\n"),
+            }
+        )
         result = await _kegg_search("https://rest.kegg.jp", {"query": "test"}, http)
         assert result["entries"][0]["id"] == "hsa:9999"
         assert result["entries"][0]["description"] == ""
@@ -388,17 +416,18 @@ class TestKeggFallback:
 # PDB tests
 # ---------------------------------------------------------------------------
 
+
 class TestPdbFallback:
     @pytest.mark.asyncio
     async def test_basic_search(self):
-        http = _mock_http({
-            "rcsbsearch": _response(json_data=PDB_SEARCH_JSON),
-            "core/entry/1TUP": _response(json_data=PDB_ENTRY_1TUP),
-            "core/entry/2XWR": _response(json_data=PDB_ENTRY_2XWR),
-        })
-        result = await _pdb_search(
-            "https://data.rcsb.org/rest/v1", {"query": "p53"}, http
+        http = _mock_http(
+            {
+                "rcsbsearch": _response(json_data=PDB_SEARCH_JSON),
+                "core/entry/1TUP": _response(json_data=PDB_ENTRY_1TUP),
+                "core/entry/2XWR": _response(json_data=PDB_ENTRY_2XWR),
+            }
         )
+        result = await _pdb_search("https://data.rcsb.org/rest/v1", {"query": "p53"}, http)
         structs = result["structures"]
         assert len(structs) == 2
         assert structs[0]["pdb_id"] == "1TUP"
@@ -408,22 +437,22 @@ class TestPdbFallback:
 
     @pytest.mark.asyncio
     async def test_empty_results(self):
-        http = _mock_http({
-            "rcsbsearch": _response(json_data={"result_set": []}, status=200),
-        })
-        result = await _pdb_search(
-            "https://data.rcsb.org/rest/v1", {"query": "zzzzz"}, http
+        http = _mock_http(
+            {
+                "rcsbsearch": _response(json_data={"result_set": []}, status=200),
+            }
         )
+        result = await _pdb_search("https://data.rcsb.org/rest/v1", {"query": "zzzzz"}, http)
         assert result["structures"] == []
 
     @pytest.mark.asyncio
     async def test_missing_fields(self):
         """Entry with resolution from rcsb_entry_info instead of reflns."""
-        http = _mock_http({
-            "rcsbsearch": _response(json_data={"result_set": [{"identifier": "2XWR"}]}),
-            "core/entry/2XWR": _response(json_data=PDB_ENTRY_2XWR),
-        })
-        result = await _pdb_search(
-            "https://data.rcsb.org/rest/v1", {"query": "test"}, http
+        http = _mock_http(
+            {
+                "rcsbsearch": _response(json_data={"result_set": [{"identifier": "2XWR"}]}),
+                "core/entry/2XWR": _response(json_data=PDB_ENTRY_2XWR),
+            }
         )
+        result = await _pdb_search("https://data.rcsb.org/rest/v1", {"query": "test"}, http)
         assert result["structures"][0]["resolution"] == 1.8

@@ -17,9 +17,7 @@ from pydantic import BaseModel, Field
 class DataLineageEntry(BaseModel):
     """Tracks a single data transformation step."""
 
-    timestamp: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     source: str  # e.g. "GEO:GSE184571"
     operation: str  # e.g. "filter_rows", "normalize", "merge"
     description: str
@@ -32,9 +30,7 @@ class DataLineageEntry(BaseModel):
 class LLMCallEntry(BaseModel):
     """Records a single LLM API call."""
 
-    timestamp: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     provider: str
     model: str
     purpose: str  # e.g. "plan_research", "interpret_results", "draft_section"
@@ -77,12 +73,17 @@ class ProvenanceEngine:
         }
         self.execution_log.append(entry)
 
-    def log_decision(self, description: str, reasoning: str, alternatives: list[str] | None = None) -> None:
-        self.log_event("decision", {
-            "description": description,
-            "reasoning": reasoning,
-            "alternatives_considered": alternatives or [],
-        })
+    def log_decision(
+        self, description: str, reasoning: str, alternatives: list[str] | None = None
+    ) -> None:
+        self.log_event(
+            "decision",
+            {
+                "description": description,
+                "reasoning": reasoning,
+                "alternatives_considered": alternatives or [],
+            },
+        )
 
     # ------------------------------------------------------------------
     # Data lineage
@@ -170,9 +171,7 @@ class ProvenanceEngine:
         if data_dir.exists():
             for f in data_dir.rglob("*"):
                 if f.is_file():
-                    checksums[str(f.relative_to(session_dir))] = self._hash(
-                        f.read_bytes()
-                    )
+                    checksums[str(f.relative_to(session_dir))] = self._hash(f.read_bytes())
 
         (kit_dir / "checksums.sha256").write_text(
             "\n".join(f"{v}  {k}" for k, v in sorted(checksums.items()))
@@ -198,10 +197,13 @@ class ProvenanceEngine:
 
     def link_source_session(self, source_session_id: str, source_dir: Path) -> None:
         """Link this session's provenance to a prior mode's output."""
-        self.log_event("cross_mode_link", {
-            "source_session_id": source_session_id,
-            "source_dir": str(source_dir),
-        })
+        self.log_event(
+            "cross_mode_link",
+            {
+                "source_session_id": source_session_id,
+                "source_dir": str(source_dir),
+            },
+        )
 
         # Copy source provenance summary as reference
         source_prov = source_dir / "provenance" / "execution_log.json"
@@ -218,10 +220,7 @@ class ProvenanceEngine:
             try:
                 source_log = json.loads(source_prov.read_text())
                 # Check that source session completed successfully
-                completed = any(
-                    e.get("event") == "phase_completed"
-                    for e in source_log
-                )
+                completed = any(e.get("event") == "phase_completed" for e in source_log)
                 if not completed:
                     issues.append("Source session has no completed phases")
             except (json.JSONDecodeError, KeyError):
@@ -245,20 +244,24 @@ class ProvenanceEngine:
         source_prov = self.provenance_dir / "source_provenance.json"
         if source_prov.exists():
             try:
-                chain.append({
-                    "type": "source",
-                    "log": json.loads(source_prov.read_text()),
-                })
+                chain.append(
+                    {
+                        "type": "source",
+                        "log": json.loads(source_prov.read_text()),
+                    }
+                )
             except json.JSONDecodeError:
                 pass
 
         # Add current session's provenance
-        chain.append({
-            "type": "current",
-            "execution_log": self.execution_log,
-            "data_lineage": [e.model_dump() for e in self.data_lineage],
-            "model_calls": [e.model_dump() for e in self.model_calls],
-        })
+        chain.append(
+            {
+                "type": "current",
+                "execution_log": self.execution_log,
+                "data_lineage": [e.model_dump() for e in self.data_lineage],
+                "model_calls": [e.model_dump() for e in self.model_calls],
+            }
+        )
 
         return chain
 

@@ -44,6 +44,10 @@ class DataRequirement(BaseModel):
     query_params: dict[str, Any] = Field(default_factory=dict)
     priority: str = "required"  # required | nice_to_have
     fallback: str = ""
+    access_mode: str = "public"  # public | synthetic | access-controlled | code-only
+    license: str = ""
+    redistribution_allowed: bool = False
+    availability_note: str = ""
 
     @field_validator("query_params", mode="before")
     @classmethod
@@ -54,6 +58,20 @@ class DataRequirement(BaseModel):
     @classmethod
     def coerce_priority(cls, v: Any) -> str:
         return str(v)
+
+    @field_validator("access_mode", mode="before")
+    @classmethod
+    def coerce_access_mode(cls, v: Any) -> str:
+        value = str(v or "public").strip().lower().replace("_", "-")
+        allowed = {"public", "synthetic", "access-controlled", "code-only"}
+        return value if value in allowed else "public"
+
+    @field_validator("redistribution_allowed", mode="before")
+    @classmethod
+    def coerce_redistribution(cls, v: Any) -> bool:
+        if isinstance(v, str):
+            return v.strip().lower() in {"1", "true", "yes"}
+        return bool(v)
 
 
 class AnalysisStep(BaseModel):
@@ -92,7 +110,9 @@ class ResearchPlan(BaseModel):
     mission_id: str = ""
     summary: str = ""
     approach: str = ""  # narrative description of the research approach
-    hypotheses: list[dict[str, str]] = Field(default_factory=list)  # {hypothesis, test, null_hypothesis}
+    hypotheses: list[dict[str, str]] = Field(
+        default_factory=list
+    )  # {hypothesis, test, null_hypothesis}
     literature_queries: list[str] = Field(default_factory=list)
     data_requirements: list[DataRequirement] = Field(default_factory=list)
     analysis_steps: list[AnalysisStep] = Field(default_factory=list)
@@ -146,6 +166,36 @@ class ResearchPlan(BaseModel):
             return float(v)
         except (ValueError, TypeError):
             return 0.0
+
+    def assert_executable(self) -> None:
+        """Reject syntactically valid plans that cannot produce scientific evidence."""
+        errors: list[str] = []
+        if not self.summary.strip():
+            errors.append("summary is empty")
+        if not self.approach.strip():
+            errors.append("approach is empty")
+        if not any(
+            item.get("hypothesis", "").strip()
+            and item.get("test", "").strip()
+            and item.get("null_hypothesis", "").strip()
+            for item in self.hypotheses
+        ):
+            errors.append("no falsifiable hypothesis contract")
+        if not any(
+            step.name.strip()
+            and step.method.strip()
+            and step.expected_output.strip()
+            for step in self.analysis_steps
+        ):
+            errors.append("no executable analysis step")
+        if not self.statistical_framework.strip():
+            errors.append("statistical framework is empty")
+        if not any(output.strip() for output in self.expected_outputs):
+            errors.append("expected outputs are empty")
+        if not any(risk.strip() for risk in self.risks):
+            errors.append("risks and limitations are empty")
+        if errors:
+            raise ValueError("Research plan is not executable: " + "; ".join(errors))
 
 
 # ---------------------------------------------------------------------------
@@ -235,7 +285,9 @@ class ResearchPlanner:
         self.llm = llm
         self.provenance = provenance
 
-    async def plan(self, mission: Mission, available_servers: list[str] | None = None) -> ResearchPlan:
+    async def plan(
+        self, mission: Mission, available_servers: list[str] | None = None
+    ) -> ResearchPlan:
         """
         Generate a research plan for the given mission.
         """
@@ -254,6 +306,7 @@ class ResearchPlanner:
 
         resp.pop("mission_id", None)
         plan = ResearchPlan(mission_id=mission.id, **resp)
+        plan.assert_executable()
 
         self.provenance.log_decision(
             description="Research plan generated",
@@ -268,11 +321,16 @@ class ResearchPlanner:
             # Refine based on critique
             plan = await self._refine_plan(mission, plan, critique)
 
-        self.provenance.log_event("planning_completed", {
-            "num_data_requirements": len(plan.data_requirements),
-            "num_analysis_steps": len(plan.analysis_steps),
-            "estimated_cost": plan.estimated_compute_cost,
-        })
+        plan.assert_executable()
+
+        self.provenance.log_event(
+            "planning_completed",
+            {
+                "num_data_requirements": len(plan.data_requirements),
+                "num_analysis_steps": len(plan.analysis_steps),
+                "estimated_cost": plan.estimated_compute_cost,
+            },
+        )
 
         return plan
 
@@ -290,16 +348,30 @@ class ResearchPlanner:
         if mission.dataset_id:
             parts.append(f"# Target Dataset\n{mission.dataset_id}")
 
+        researcher_guidance = mission.metadata.get("researcher_guidance")
+        if isinstance(researcher_guidance, list) and researcher_guidance:
+            parts.append(
+                "# Researcher Revision Guidance\n"
+                + "\n".join(f"- {str(item)}" for item in researcher_guidance[-8:])
+                + "\nTreat this guidance as binding scope input unless it conflicts with safety, "
+                "scientific validity, available data, or the declared resource limits. "
+                "Make the resulting changes explicit in the revised plan."
+            )
+
         parts.append(f"# Domain\n{mission.domain}")
         parts.append(f"# Research Mode\n{mission.mode.value}")
-        parts.append(f"# Constraints\n"
-                      f"- Compute budget: ${mission.constraints.compute_budget}\n"
-                      f"- Time limit: {mission.constraints.time_limit}\n"
-                      f"- Data sources: {mission.constraints.data_sources}\n"
-                      f"- Ethics: {mission.constraints.ethics}")
+        parts.append(
+            f"# Constraints\n"
+            f"- Compute budget: ${mission.constraints.compute_budget}\n"
+            f"- Time limit: {mission.constraints.time_limit}\n"
+            f"- Data sources: {mission.constraints.data_sources}\n"
+            f"- Ethics: {mission.constraints.ethics}"
+        )
 
         if available_servers:
-            parts.append(f"# Available MCP Data Servers\n" + "\n".join(f"- {s}" for s in available_servers))
+            parts.append(
+                f"# Available MCP Data Servers\n" + "\n".join(f"- {s}" for s in available_servers)
+            )
 
         parts.append(
             "\n# Instructions\n"
@@ -308,8 +380,14 @@ class ResearchPlanner:
             "- approach: detailed narrative of the research approach\n"
             "- hypotheses: list of {hypothesis, test, null_hypothesis} objects\n"
             "- literature_queries: list of search queries for literature review\n"
-            "- data_requirements: list of {description, source_type, server_name, query_params, priority, fallback}\n"
-            "- analysis_steps: list of {name, description, method, inputs, parameters, expected_output, statistical_tests}\n"
+            "- data_requirements: list of {description, source_type, server_name, "
+            "query_params, priority, fallback, access_mode, license, "
+            "redistribution_allowed, availability_note}\n"
+            "  access_mode must be public, synthetic, access-controlled, or code-only. "
+            "Never infer a redistribution license; use an empty license and false when "
+            "the source does not declare one.\n"
+            "- analysis_steps: list of {name, description, method, inputs, parameters, "
+            "expected_output, statistical_tests}\n"
             "- statistical_framework: description of statistical approach\n"
             "- expected_outputs: list of expected deliverables\n"
             "- risks: list of risks and limitations\n"
@@ -322,20 +400,25 @@ class ResearchPlanner:
     async def _critique_plan(self, mission: Mission, plan: ResearchPlan) -> dict[str, Any]:
         """Self-critique: find weaknesses in the plan."""
         resp = await self.llm.complete_json(
-            messages=[{"role": "user", "content": (
-                f"Critique this research plan for the objective: {mission.objective}\n\n"
-                f"Plan summary: {plan.summary}\n"
-                f"Approach: {plan.approach}\n"
-                f"Statistical framework: {plan.statistical_framework}\n\n"
-                "Identify issues with:\n"
-                "1. Statistical validity\n"
-                "2. Potential confounders not addressed\n"
-                "3. Missing controls\n"
-                "4. Data quality concerns\n"
-                "5. Logical gaps in reasoning\n"
-                "6. Alternative approaches that might be better\n\n"
-                "Return JSON with: {issues: [...], severity: 'low'|'medium'|'high', suggestions: [...]}"
-            )}],
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        f"Critique this research plan for the objective: {mission.objective}\n\n"
+                        f"Plan summary: {plan.summary}\n"
+                        f"Approach: {plan.approach}\n"
+                        f"Statistical framework: {plan.statistical_framework}\n\n"
+                        "Identify issues with:\n"
+                        "1. Statistical validity\n"
+                        "2. Potential confounders not addressed\n"
+                        "3. Missing controls\n"
+                        "4. Data quality concerns\n"
+                        "5. Logical gaps in reasoning\n"
+                        "6. Alternative approaches that might be better\n\n"
+                        "Return JSON with: {issues: [...], severity: 'low'|'medium'|'high', suggestions: [...]}"
+                    ),
+                }
+            ],
             system="You are a skeptical peer reviewer. Find real problems, not nitpicks.",
         )
         return resp
@@ -345,15 +428,20 @@ class ResearchPlanner:
     ) -> ResearchPlan:
         """Refine plan based on self-critique."""
         resp = await self.llm.complete_json(
-            messages=[{"role": "user", "content": (
-                f"Original plan:\n{plan.model_dump_json(indent=2)}\n\n"
-                f"Critique:\n{json.dumps(critique, indent=2)}\n\n"
-                "Revise the plan to address these issues. Return the complete "
-                "revised plan as JSON with the same schema.\n\n"
-                "IMPORTANT: Your entire response must be a single JSON object. "
-                "Do NOT include any text, explanation, or markdown before or after "
-                "the JSON. Start with { and end with }."
-            )}],
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        f"Original plan:\n{plan.model_dump_json(indent=2)}\n\n"
+                        f"Critique:\n{json.dumps(critique, indent=2)}\n\n"
+                        "Revise the plan to address these issues. Return the complete "
+                        "revised plan as JSON with the same schema.\n\n"
+                        "IMPORTANT: Your entire response must be a single JSON object. "
+                        "Do NOT include any text, explanation, or markdown before or after "
+                        "the JSON. Start with { and end with }."
+                    ),
+                }
+            ],
             system=PLANNER_SYSTEM,
             retries=4,
         )

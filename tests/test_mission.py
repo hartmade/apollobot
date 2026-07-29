@@ -68,7 +68,9 @@ class TestMission:
 
     def test_mission_auto_title(self):
         """Test that title is auto-generated from objective."""
-        mission = Mission(objective="A very long research question that exceeds eighty characters in length")
+        mission = Mission(
+            objective="A very long research question that exceeds eighty characters in length"
+        )
         assert len(mission.title) <= 80
         assert mission.title == mission.objective[:80].strip()
 
@@ -102,7 +104,7 @@ class TestMission:
 
         yaml_path = temp_dir / "mission.yaml"
         # Use model_dump with mode='json' to get serializable output
-        data = mission.model_dump(mode='json')
+        data = mission.model_dump(mode="json")
         yaml_path.write_text(pyyaml.dump(data, default_flow_style=False))
 
         loaded = Mission.from_yaml(yaml_path)

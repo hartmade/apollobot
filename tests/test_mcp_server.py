@@ -96,8 +96,13 @@ class TestErrorResponse:
 
     def test_error_codes_are_strings(self):
         """All error codes are uppercase strings."""
-        codes = [SESSION_NOT_FOUND, PHASE_NOT_AVAILABLE, BUDGET_EXCEEDED,
-                 INVALID_INPUT, INTERNAL_ERROR]
+        codes = [
+            SESSION_NOT_FOUND,
+            PHASE_NOT_AVAILABLE,
+            BUDGET_EXCEEDED,
+            INVALID_INPUT,
+            INTERNAL_ERROR,
+        ]
         for code in codes:
             assert isinstance(code, str)
             assert code == code.upper()

@@ -22,6 +22,7 @@ from apollobot.core.mission import Mission
 
 # Avoid circular import — use TYPE_CHECKING for type hints only
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from apollobot.core.translation import TranslationReport
 
@@ -84,9 +85,7 @@ class CostTracker(BaseModel):
     def total_cost(self) -> float:
         return self.estimated_cost_usd + self.compute_cost_usd
 
-    def record_llm_call(
-        self, input_tokens: int, output_tokens: int, cost: float
-    ) -> None:
+    def record_llm_call(self, input_tokens: int, output_tokens: int, cost: float) -> None:
         self.llm_calls += 1
         self.llm_input_tokens += input_tokens
         self.llm_output_tokens += output_tokens
@@ -102,16 +101,16 @@ class Session(BaseModel):
     current_phase: Phase = Phase.PLANNING
     phase_results: dict[str, PhaseResult] = Field(default_factory=dict)
     cost: CostTracker = Field(default_factory=CostTracker)
-    started_at: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    started_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     completed_at: str = ""
     provenance_log: list[dict[str, Any]] = Field(default_factory=list)
 
     # Accumulated knowledge the agent builds during the session
     literature_corpus: list[dict[str, Any]] = Field(default_factory=list)
     datasets: list[dict[str, Any]] = Field(default_factory=list)
-    hypotheses_status: dict[str, str] = Field(default_factory=dict)  # hypothesis → supported|rejected|inconclusive
+    hypotheses_status: dict[str, str] = Field(
+        default_factory=dict
+    )  # hypothesis → supported|rejected|inconclusive
     key_findings: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 
@@ -161,7 +160,9 @@ class Session(BaseModel):
         )
         self.log_event("phase_started", {"phase": phase.value})
 
-    def complete_phase(self, phase: Phase, summary: str = "", findings: list[dict[str, Any]] | None = None) -> None:
+    def complete_phase(
+        self, phase: Phase, summary: str = "", findings: list[dict[str, Any]] | None = None
+    ) -> None:
         result = self.phase_results.get(phase.value)
         if result:
             result.completed_at = datetime.now(timezone.utc).isoformat()

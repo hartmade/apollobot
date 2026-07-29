@@ -80,24 +80,36 @@ class TestDataRequirementValidators:
     def test_query_params_dict_passthrough(self):
         """Dict query_params passes through."""
         dr = DataRequirement(
-            description="test", source_type="mcp_server",
+            description="test",
+            source_type="mcp_server",
             query_params={"gene": "TP53", "organism": "human"},
         )
         assert dr.query_params == {"gene": "TP53", "organism": "human"}
 
     def test_priority_int_coercion(self):
         """Integer priority is coerced to string."""
-        dr = DataRequirement(
-            description="test", source_type="download", priority=1
-        )
+        dr = DataRequirement(description="test", source_type="download", priority=1)
         assert dr.priority == "1"
 
     def test_priority_string_passthrough(self):
         """String priority passes through."""
-        dr = DataRequirement(
-            description="test", source_type="download", priority="required"
-        )
+        dr = DataRequirement(description="test", source_type="download", priority="required")
         assert dr.priority == "required"
+
+    def test_dataset_access_policy_is_bounded_and_conservative(self):
+        dr = DataRequirement(
+            description="controlled cohort",
+            access_mode="ACCESS_CONTROLLED",
+            license="",
+            redistribution_allowed="no",
+        )
+        assert dr.access_mode == "access-controlled"
+        assert dr.redistribution_allowed is False
+
+    def test_unknown_access_mode_falls_back_to_public_without_redistribution(self):
+        dr = DataRequirement(description="source metadata", access_mode="mystery")
+        assert dr.access_mode == "public"
+        assert dr.redistribution_allowed is False
 
 
 class TestAnalysisStepValidators:
@@ -106,7 +118,9 @@ class TestAnalysisStepValidators:
     def test_inputs_from_string(self):
         """Comma-separated inputs string is split."""
         step = AnalysisStep(
-            name="test", description="test", method="regression",
+            name="test",
+            description="test",
+            method="regression",
             inputs="dataset_a, dataset_b",
         )
         assert step.inputs == ["dataset_a", "dataset_b"]
@@ -114,7 +128,9 @@ class TestAnalysisStepValidators:
     def test_parameters_from_string(self):
         """String parameters coerced to dict."""
         step = AnalysisStep(
-            name="test", description="test", method="regression",
+            name="test",
+            description="test",
+            method="regression",
             parameters="alpha=0.05",
         )
         assert step.parameters == {"query": "alpha=0.05"}
@@ -122,7 +138,9 @@ class TestAnalysisStepValidators:
     def test_statistical_tests_from_string(self):
         """Comma-separated statistical_tests string is split."""
         step = AnalysisStep(
-            name="test", description="test", method="regression",
+            name="test",
+            description="test",
+            method="regression",
             statistical_tests="t-test, anova",
         )
         assert step.statistical_tests == ["t-test", "anova"]
@@ -130,8 +148,11 @@ class TestAnalysisStepValidators:
     def test_all_fields_from_lists(self):
         """Normal list values pass through."""
         step = AnalysisStep(
-            name="test", description="test", method="regression",
-            inputs=["d1"], parameters={"alpha": 0.05},
+            name="test",
+            description="test",
+            method="regression",
+            inputs=["d1"],
+            parameters={"alpha": 0.05},
             statistical_tests=["chi2"],
         )
         assert step.inputs == ["d1"]
@@ -145,7 +166,9 @@ class TestResearchPlanValidators:
     def test_risks_from_string(self):
         """String risks field is coerced to list."""
         plan = ResearchPlan(
-            mission_id="test", summary="s", approach="a",
+            mission_id="test",
+            summary="s",
+            approach="a",
             risks="data quality issues",
         )
         assert plan.risks == ["data quality issues"]
@@ -153,7 +176,9 @@ class TestResearchPlanValidators:
     def test_risks_from_list_of_dicts(self):
         """List of dicts for risks is flattened to strings."""
         plan = ResearchPlan(
-            mission_id="test", summary="s", approach="a",
+            mission_id="test",
+            summary="s",
+            approach="a",
             risks=[{"risk": "low power", "mitigation": "increase n"}],
         )
         assert len(plan.risks) == 1
@@ -163,7 +188,9 @@ class TestResearchPlanValidators:
     def test_risks_from_list_of_strings(self):
         """List of strings passes through."""
         plan = ResearchPlan(
-            mission_id="test", summary="s", approach="a",
+            mission_id="test",
+            summary="s",
+            approach="a",
             risks=["risk1", "risk2"],
         )
         assert plan.risks == ["risk1", "risk2"]
@@ -171,7 +198,9 @@ class TestResearchPlanValidators:
     def test_float_from_string(self):
         """String float is coerced."""
         plan = ResearchPlan(
-            mission_id="test", summary="s", approach="a",
+            mission_id="test",
+            summary="s",
+            approach="a",
             estimated_compute_cost="3.50",
         )
         assert plan.estimated_compute_cost == 3.50
@@ -179,7 +208,9 @@ class TestResearchPlanValidators:
     def test_float_unparseable(self):
         """Unparseable float defaults to 0.0."""
         plan = ResearchPlan(
-            mission_id="test", summary="s", approach="a",
+            mission_id="test",
+            summary="s",
+            approach="a",
             estimated_compute_cost="not a number",
         )
         assert plan.estimated_compute_cost == 0.0
@@ -187,10 +218,18 @@ class TestResearchPlanValidators:
     def test_float_none(self):
         """None float defaults to 0.0."""
         plan = ResearchPlan(
-            mission_id="test", summary="s", approach="a",
+            mission_id="test",
+            summary="s",
+            approach="a",
             estimated_time_hours=None,
         )
         assert plan.estimated_time_hours == 0.0
+
+    def test_empty_structured_plan_is_not_executable(self):
+        """A provider returning an empty JSON object cannot pass the execution boundary."""
+        plan = ResearchPlan(mission_id="test")
+        with pytest.raises(ValueError, match="no executable analysis step"):
+            plan.assert_executable()
 
 
 class TestExtractJson:

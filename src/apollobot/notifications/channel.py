@@ -23,9 +23,7 @@ class NotificationChannel(ABC):
         """Send a notification event to this channel."""
         ...
 
-    async def wait_for_response(
-        self, event: NotificationEvent, timeout: float = 3600
-    ) -> bool:
+    async def wait_for_response(self, event: NotificationEvent, timeout: float = 3600) -> bool:
         """Wait for a user response (approve/deny). Default: auto-approve."""
         return True
 

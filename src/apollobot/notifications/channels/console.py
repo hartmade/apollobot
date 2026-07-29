@@ -25,16 +25,16 @@ _SEVERITY_STYLE = {
 }
 
 _EVENT_EMOJI = {
-    EventType.SESSION_STARTED: "\U0001f52c",   # microscope
-    EventType.PHASE_STARTED: "\u25b6\ufe0f",   # play
-    EventType.PHASE_COMPLETED: "\u2705",        # check
-    EventType.PHASE_FAILED: "\u274c",           # cross
+    EventType.SESSION_STARTED: "\U0001f52c",  # microscope
+    EventType.PHASE_STARTED: "\u25b6\ufe0f",  # play
+    EventType.PHASE_COMPLETED: "\u2705",  # check
+    EventType.PHASE_FAILED: "\u274c",  # cross
     EventType.CHECKPOINT_APPROVAL: "\u26a0\ufe0f",  # warning
-    EventType.FINDING: "\U0001f4a1",            # bulb
-    EventType.BUDGET_WARNING: "\U0001f4b0",     # money bag
+    EventType.FINDING: "\U0001f4a1",  # bulb
+    EventType.BUDGET_WARNING: "\U0001f4b0",  # money bag
     EventType.SESSION_COMPLETED: "\U0001f389",  # party
-    EventType.SESSION_FAILED: "\U0001f6a8",     # rotating light
-    EventType.HEARTBEAT: "\U0001f493",          # heartbeat
+    EventType.SESSION_FAILED: "\U0001f6a8",  # rotating light
+    EventType.HEARTBEAT: "\U0001f493",  # heartbeat
 }
 
 
@@ -64,8 +64,6 @@ class ConsoleChannel(NotificationChannel):
                 )
             )
         else:
-            self._console.print(
-                f"\n[bold {style}]{emoji} {event.title}[/bold {style}]"
-            )
+            self._console.print(f"\n[bold {style}]{emoji} {event.title}[/bold {style}]")
             if event.summary:
                 self._console.print(f"  {event.summary}")

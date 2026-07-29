@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 # PubChem — PUG REST
 # ---------------------------------------------------------------------------
 
+
 def _extract_pubchem_props(pc: dict[str, Any]) -> dict[str, Any]:
     """Extract key properties from a PC_Compound record."""
     props: dict[str, Any] = {}
@@ -64,14 +65,16 @@ async def _pubchem_search(
             for pc in data.get("PC_Compounds", [])[:1]:
                 cid = safe_int(pc.get("id", {}).get("id", {}).get("cid", 0))
                 props = _extract_pubchem_props(pc)
-                all_compounds.append({
-                    "cid": cid,
-                    "name": props.get("name", name),
-                    "formula": props.get("formula", ""),
-                    "molecular_weight": props.get("molecular_weight"),
-                    "smiles": props.get("smiles", ""),
-                    "source": "pubchem",
-                })
+                all_compounds.append(
+                    {
+                        "cid": cid,
+                        "name": props.get("name", name),
+                        "formula": props.get("formula", ""),
+                        "molecular_weight": props.get("molecular_weight"),
+                        "smiles": props.get("smiles", ""),
+                        "source": "pubchem",
+                    }
+                )
         logger.info("PubChem fallback: %d compounds from compound_names list", len(all_compounds))
         return {"compounds": all_compounds}
 
@@ -97,14 +100,16 @@ async def _pubchem_search(
         cid = safe_int(pc.get("id", {}).get("id", {}).get("cid", 0))
         props = _extract_pubchem_props(pc)
 
-        compounds.append({
-            "cid": cid,
-            "name": props.get("name", query),
-            "formula": props.get("formula", ""),
-            "molecular_weight": props.get("molecular_weight"),
-            "smiles": props.get("smiles", ""),
-            "source": "pubchem",
-        })
+        compounds.append(
+            {
+                "cid": cid,
+                "name": props.get("name", query),
+                "formula": props.get("formula", ""),
+                "molecular_weight": props.get("molecular_weight"),
+                "smiles": props.get("smiles", ""),
+                "source": "pubchem",
+            }
+        )
 
     logger.info("PubChem fallback: %d compounds for query=%r", len(compounds), query)
     return {"compounds": compounds}
@@ -113,6 +118,7 @@ async def _pubchem_search(
 # ---------------------------------------------------------------------------
 # ChEMBL — EBI REST API
 # ---------------------------------------------------------------------------
+
 
 async def _chembl_search(
     api_base: str,
@@ -136,13 +142,15 @@ async def _chembl_search(
 
     molecules = []
     for mol in data.get("molecules", []):
-        molecules.append({
-            "chembl_id": mol.get("molecule_chembl_id", ""),
-            "pref_name": mol.get("pref_name", ""),
-            "molecule_type": mol.get("molecule_type", ""),
-            "max_phase": safe_int(mol.get("max_phase", 0)),
-            "source": "chembl",
-        })
+        molecules.append(
+            {
+                "chembl_id": mol.get("molecule_chembl_id", ""),
+                "pref_name": mol.get("pref_name", ""),
+                "molecule_type": mol.get("molecule_type", ""),
+                "max_phase": safe_int(mol.get("max_phase", 0)),
+                "source": "chembl",
+            }
+        )
 
     logger.info("ChEMBL fallback: %d molecules for query=%r", len(molecules), query)
     return {"molecules": molecules}
@@ -151,6 +159,7 @@ async def _chembl_search(
 # ---------------------------------------------------------------------------
 # AlphaFold DB — EBI API
 # ---------------------------------------------------------------------------
+
 
 async def _alphafold_search(
     api_base: str,
@@ -166,7 +175,10 @@ async def _alphafold_search(
     # search.  Accessions are alphanumeric, 6-10 chars, no spaces.  If the
     # query looks like natural language, return empty to avoid 400 errors.
     if " " in accession or len(accession) > 20:
-        logger.info("AlphaFold fallback: query %r looks like text, not an accession — skipping", accession[:40])
+        logger.info(
+            "AlphaFold fallback: query %r looks like text, not an accession — skipping",
+            accession[:40],
+        )
         return {"predictions": []}
 
     resp = await get_with_retry(
@@ -184,14 +196,16 @@ async def _alphafold_search(
 
     predictions = []
     for entry in entries:
-        predictions.append({
-            "entry_id": entry.get("entryId", ""),
-            "uniprot_accession": entry.get("uniprotAccession", accession),
-            "gene": entry.get("gene", ""),
-            "organism": entry.get("organismScientificName", ""),
-            "confidence": entry.get("globalMetricValue"),
-            "source": "alphafold-db",
-        })
+        predictions.append(
+            {
+                "entry_id": entry.get("entryId", ""),
+                "uniprot_accession": entry.get("uniprotAccession", accession),
+                "gene": entry.get("gene", ""),
+                "organism": entry.get("organismScientificName", ""),
+                "confidence": entry.get("globalMetricValue"),
+                "source": "alphafold-db",
+            }
+        )
 
     logger.info("AlphaFold fallback: %d predictions for accession=%r", len(predictions), accession)
     return {"predictions": predictions}
@@ -200,6 +214,7 @@ async def _alphafold_search(
 # ---------------------------------------------------------------------------
 # ZINC — docking.org API
 # ---------------------------------------------------------------------------
+
 
 async def _zinc_search(
     api_base: str,
@@ -224,13 +239,15 @@ async def _zinc_search(
 
     substances = []
     for item in items[:limit]:
-        substances.append({
-            "zinc_id": item.get("zinc_id", item.get("id", "")),
-            "smiles": item.get("smiles", ""),
-            "mwt": item.get("mwt"),
-            "logp": item.get("logp"),
-            "source": "zinc",
-        })
+        substances.append(
+            {
+                "zinc_id": item.get("zinc_id", item.get("id", "")),
+                "smiles": item.get("smiles", ""),
+                "mwt": item.get("mwt"),
+                "logp": item.get("logp"),
+                "source": "zinc",
+            }
+        )
 
     logger.info("ZINC fallback: %d substances for query=%r", len(substances), query)
     return {"substances": substances}

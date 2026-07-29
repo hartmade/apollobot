@@ -170,9 +170,13 @@ class TestCrossModeProvenance:
         source_dir = temp_dir / "source-session"
         source_prov_dir = source_dir / "provenance"
         source_prov_dir.mkdir(parents=True)
-        (source_prov_dir / "execution_log.json").write_text(json.dumps([
-            {"event": "phase_completed", "phase": "self_review"},
-        ]))
+        (source_prov_dir / "execution_log.json").write_text(
+            json.dumps(
+                [
+                    {"event": "phase_completed", "phase": "self_review"},
+                ]
+            )
+        )
 
         # Create target session
         target_dir = temp_dir / "target-session"
@@ -188,9 +192,13 @@ class TestCrossModeProvenance:
         source_dir = temp_dir / "source-session"
         source_prov_dir = source_dir / "provenance"
         source_prov_dir.mkdir(parents=True)
-        (source_prov_dir / "execution_log.json").write_text(json.dumps([
-            {"event": "phase_completed", "phase": "self_review"},
-        ]))
+        (source_prov_dir / "execution_log.json").write_text(
+            json.dumps(
+                [
+                    {"event": "phase_completed", "phase": "self_review"},
+                ]
+            )
+        )
 
         target_dir = temp_dir / "target-session"
         provenance = ProvenanceEngine(target_dir)
@@ -215,9 +223,13 @@ class TestCrossModeProvenance:
         source_dir = temp_dir / "source-session"
         source_prov_dir = source_dir / "provenance"
         source_prov_dir.mkdir(parents=True)
-        (source_prov_dir / "execution_log.json").write_text(json.dumps([
-            {"event": "session_started"},
-        ]))
+        (source_prov_dir / "execution_log.json").write_text(
+            json.dumps(
+                [
+                    {"event": "session_started"},
+                ]
+            )
+        )
 
         target_dir = temp_dir / "target-session"
         provenance = ProvenanceEngine(target_dir)

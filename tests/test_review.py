@@ -31,37 +31,49 @@ from apollobot.review.submission import (
 # ---------------------------------------------------------------------------
 
 
-MOCK_REVIEW_JSON = json.dumps({
-    "overall_verdict": "revise",
-    "confidence": 0.7,
-    "issues": [
-        {
-            "severity": "major",
-            "category": "statistical",
-            "description": "No multiple comparison correction applied",
-            "location": "Results",
-            "suggestion": "Apply FDR correction",
-        }
-    ],
-    "strengths": ["Novel dataset", "Clear writing"],
-    "summary": "Solid work with some statistical issues.",
-})
+MOCK_REVIEW_JSON = json.dumps(
+    {
+        "overall_verdict": "revise",
+        "confidence": 0.7,
+        "issues": [
+            {
+                "severity": "major",
+                "category": "statistical",
+                "description": "No multiple comparison correction applied",
+                "location": "Results",
+                "suggestion": "Apply FDR correction",
+            }
+        ],
+        "strengths": ["Novel dataset", "Clear writing"],
+        "summary": "Solid work with some statistical issues.",
+    }
+)
 
-MOCK_SCORING_JSON = json.dumps({
-    "recommendation": "minor_revision",
-    "confidence": 0.75,
-    "scores": [
-        {"dimension": "statistical_rigor", "score": 6, "justification": "Missing FDR correction"},
-        {"dimension": "methodological_soundness", "score": 8, "justification": "Well-designed study"},
-        {"dimension": "reproducibility", "score": 9, "justification": "Full provenance chain"},
-        {"dimension": "novelty", "score": 7, "justification": "New approach to known problem"},
-        {"dimension": "clarity", "score": 8, "justification": "Clear and well-structured"},
-    ],
-    "key_issues": [{"severity": "major", "description": "No FDR correction"}],
-    "strengths": ["Novel dataset", "Full provenance"],
-    "revision_requests": ["Apply Benjamini-Hochberg FDR correction", "Add effect size table"],
-    "summary": "Strong submission with minor statistical gaps.",
-})
+MOCK_SCORING_JSON = json.dumps(
+    {
+        "recommendation": "minor_revision",
+        "confidence": 0.75,
+        "scores": [
+            {
+                "dimension": "statistical_rigor",
+                "score": 6,
+                "justification": "Missing FDR correction",
+            },
+            {
+                "dimension": "methodological_soundness",
+                "score": 8,
+                "justification": "Well-designed study",
+            },
+            {"dimension": "reproducibility", "score": 9, "justification": "Full provenance chain"},
+            {"dimension": "novelty", "score": 7, "justification": "New approach to known problem"},
+            {"dimension": "clarity", "score": 8, "justification": "Clear and well-structured"},
+        ],
+        "key_issues": [{"severity": "major", "description": "No FDR correction"}],
+        "strengths": ["Novel dataset", "Full provenance"],
+        "revision_requests": ["Apply Benjamini-Hochberg FDR correction", "Add effect size table"],
+        "summary": "Strong submission with minor statistical gaps.",
+    }
+)
 
 
 def _make_mock_llm(*responses: str) -> MagicMock:
@@ -138,9 +150,7 @@ class TestProvenanceBadge:
         assert badge == ProvenanceBadge.BRONZE
 
     def test_nonexistent_path_is_bronze(self):
-        badge = SubmissionReviewer._assess_provenance(
-            Path("/nonexistent/path"), "session-123"
-        )
+        badge = SubmissionReviewer._assess_provenance(Path("/nonexistent/path"), "session-123")
         assert badge == ProvenanceBadge.BRONZE
 
     def test_full_provenance_is_gold(self, tmp_path):
@@ -274,10 +284,12 @@ class TestSubmissionPipeline:
         from apollobot.review.pipeline import SubmissionPipeline
 
         pipe = SubmissionPipeline(pipeline)
-        result = await pipe.process({
-            "manuscript_text": "# Test Paper\n\nContent here.",
-            "title": "Test Paper",
-        })
+        result = await pipe.process(
+            {
+                "manuscript_text": "# Test Paper\n\nContent here.",
+                "title": "Test Paper",
+            }
+        )
         assert result["status"] == "reviewed"
         assert result["recommendation"] == "minor_revision"
         assert "report_markdown" in result
@@ -289,10 +301,12 @@ class TestSubmissionPipeline:
         ms = tmp_path / "paper.md"
         ms.write_text("# Test Paper\n\nContent.")
         pipe = SubmissionPipeline(pipeline)
-        result = await pipe.process({
-            "manuscript_path": str(ms),
-            "title": "File Paper",
-        })
+        result = await pipe.process(
+            {
+                "manuscript_path": str(ms),
+                "title": "File Paper",
+            }
+        )
         assert result["status"] == "reviewed"
 
     @pytest.mark.asyncio
@@ -308,9 +322,11 @@ class TestSubmissionPipeline:
         from apollobot.review.pipeline import SubmissionPipeline
 
         pipe = SubmissionPipeline(pipeline)
-        result = await pipe.process({
-            "manuscript_path": "/nonexistent/paper.md",
-        })
+        result = await pipe.process(
+            {
+                "manuscript_path": "/nonexistent/paper.md",
+            }
+        )
         assert result["status"] == "error"
 
     @pytest.mark.asyncio
@@ -326,10 +342,12 @@ class TestSubmissionPipeline:
         notifier = ReviewNotifier(router)
 
         pipe = SubmissionPipeline(pipeline, notifier=notifier)
-        result = await pipe.process({
-            "manuscript_text": "# Paper\n\nContent.",
-            "title": "Notified Paper",
-        })
+        result = await pipe.process(
+            {
+                "manuscript_text": "# Paper\n\nContent.",
+                "title": "Notified Paper",
+            }
+        )
         assert result["status"] == "reviewed"
         # Should have sent at least 2 notifications (received + review complete)
         assert channel.send.call_count >= 2
@@ -344,11 +362,13 @@ class TestSubmissionPipeline:
         journal.post_notification = AsyncMock(return_value={"success": True})
 
         pipe = SubmissionPipeline(pipeline, journal_client=journal)
-        result = await pipe.process({
-            "manuscript_text": "# Paper\n\nContent.",
-            "title": "Journal Paper",
-            "paper_id": "paper-abc",
-        })
+        result = await pipe.process(
+            {
+                "manuscript_text": "# Paper\n\nContent.",
+                "title": "Journal Paper",
+                "paper_id": "paper-abc",
+            }
+        )
         assert result["status"] == "reviewed"
         journal.post_ai_review.assert_called_once()
         journal.post_notification.assert_called_once()
@@ -366,11 +386,13 @@ class TestSubmissionPipeline:
         journal.post_notification = AsyncMock(side_effect=Exception("Connection refused"))
 
         pipe = SubmissionPipeline(pipeline, journal_client=journal)
-        result = await pipe.process({
-            "manuscript_text": "# Paper\n\nContent.",
-            "title": "Failing Journal",
-            "paper_id": "paper-xyz",
-        })
+        result = await pipe.process(
+            {
+                "manuscript_text": "# Paper\n\nContent.",
+                "title": "Failing Journal",
+                "paper_id": "paper-xyz",
+            }
+        )
         # Review still succeeds even though journal calls failed
         assert result["status"] == "reviewed"
         assert result["recommendation"] == "minor_revision"
@@ -385,10 +407,12 @@ class TestSubmissionPipeline:
         journal.post_notification = AsyncMock()
 
         pipe = SubmissionPipeline(pipeline, journal_client=journal)
-        result = await pipe.process({
-            "manuscript_text": "# Paper\n\nContent.",
-            "title": "No Paper ID",
-        })
+        result = await pipe.process(
+            {
+                "manuscript_text": "# Paper\n\nContent.",
+                "title": "No Paper ID",
+            }
+        )
         assert result["status"] == "reviewed"
         # Journal should NOT be called when no paper_id
         journal.post_ai_review.assert_not_called()

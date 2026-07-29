@@ -66,21 +66,26 @@ class ReviewEngine:
 
         # Review prompt
         review_resp = await self.llm.complete(
-            messages=[{"role": "user", "content": (
-                f"Review this scientific manuscript for publication readiness.\n\n"
-                f"MANUSCRIPT:\n{manuscript_text[:10000]}\n\n"
-                f"{provenance_context}\n\n"
-                "Evaluate on these dimensions and return JSON:\n"
-                "{\n"
-                '  "overall_verdict": "accept|revise|reject",\n'
-                '  "confidence": 0.0-1.0,\n'
-                '  "issues": [{"severity": "critical|major|minor|suggestion", '
-                '"category": "statistical|methodological|logical|reproducibility|writing", '
-                '"description": "...", "location": "section name", "suggestion": "..."}],\n'
-                '  "strengths": ["..."],\n'
-                '  "summary": "2-3 sentence overall assessment"\n'
-                "}"
-            )}],
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        f"Review this scientific manuscript for publication readiness.\n\n"
+                        f"MANUSCRIPT:\n{manuscript_text[:10000]}\n\n"
+                        f"{provenance_context}\n\n"
+                        "Evaluate on these dimensions and return JSON:\n"
+                        "{\n"
+                        '  "overall_verdict": "accept|revise|reject",\n'
+                        '  "confidence": 0.0-1.0,\n'
+                        '  "issues": [{"severity": "critical|major|minor|suggestion", '
+                        '"category": "statistical|methodological|logical|reproducibility|writing", '
+                        '"description": "...", "location": "section name", "suggestion": "..."}],\n'
+                        '  "strengths": ["..."],\n'
+                        '  "summary": "2-3 sentence overall assessment"\n'
+                        "}"
+                    ),
+                }
+            ],
             system=(
                 "You are an expert peer reviewer evaluating a computational research paper. "
                 "Be thorough but fair. Focus on scientific rigor, not style. "
@@ -98,7 +103,13 @@ class ReviewEngine:
             review_data = {
                 "overall_verdict": "revise",
                 "confidence": 0.5,
-                "issues": [{"severity": "minor", "category": "writing", "description": "Review parsing failed"}],
+                "issues": [
+                    {
+                        "severity": "minor",
+                        "category": "writing",
+                        "description": "Review parsing failed",
+                    }
+                ],
                 "strengths": [],
                 "summary": review_resp.text[:500],
             }
@@ -113,29 +124,65 @@ class ReviewEngine:
     async def _statistical_checks(self, text: str) -> dict[str, Any]:
         """Run automated statistical validation checks."""
         checks = {
-            "p_values_reported": "p-value" in text.lower() or "p =" in text.lower() or "p<" in text.lower(),
-            "effect_sizes_reported": any(term in text.lower() for term in [
-                "cohen's d", "effect size", "odds ratio", "relative risk",
-                "r²", "r-squared", "eta", "confidence interval",
-            ]),
-            "sample_size_reported": any(term in text.lower() for term in [
-                "n =", "n=", "sample size", "participants", "observations",
-            ]),
-            "multiple_comparison_addressed": any(term in text.lower() for term in [
-                "bonferroni", "fdr", "false discovery", "multiple comparison",
-                "correction", "adjusted p", "holm",
-            ]),
+            "p_values_reported": "p-value" in text.lower()
+            or "p =" in text.lower()
+            or "p<" in text.lower(),
+            "effect_sizes_reported": any(
+                term in text.lower()
+                for term in [
+                    "cohen's d",
+                    "effect size",
+                    "odds ratio",
+                    "relative risk",
+                    "r²",
+                    "r-squared",
+                    "eta",
+                    "confidence interval",
+                ]
+            ),
+            "sample_size_reported": any(
+                term in text.lower()
+                for term in [
+                    "n =",
+                    "n=",
+                    "sample size",
+                    "participants",
+                    "observations",
+                ]
+            ),
+            "multiple_comparison_addressed": any(
+                term in text.lower()
+                for term in [
+                    "bonferroni",
+                    "fdr",
+                    "false discovery",
+                    "multiple comparison",
+                    "correction",
+                    "adjusted p",
+                    "holm",
+                ]
+            ),
             "limitations_discussed": "limitation" in text.lower(),
-            "data_availability": any(term in text.lower() for term in [
-                "data availab", "open data", "repository", "github", "zenodo",
-            ]),
+            "data_availability": any(
+                term in text.lower()
+                for term in [
+                    "data availab",
+                    "open data",
+                    "repository",
+                    "github",
+                    "zenodo",
+                ]
+            ),
         }
 
         checks["score"] = sum(checks.values()) / len(checks)
         checks["grade"] = (
-            "A" if checks["score"] >= 0.8
-            else "B" if checks["score"] >= 0.6
-            else "C" if checks["score"] >= 0.4
+            "A"
+            if checks["score"] >= 0.8
+            else "B"
+            if checks["score"] >= 0.6
+            else "C"
+            if checks["score"] >= 0.4
             else "D"
         )
 
@@ -146,17 +193,22 @@ class ReviewEngine:
     ) -> ReviewReport:
         """Compare replication results against original paper."""
         resp = await self.llm.complete_json(
-            messages=[{"role": "user", "content": (
-                f"Compare these replication results against the original paper.\n\n"
-                f"ORIGINAL PAPER:\n{original_paper[:5000]}\n\n"
-                f"REPLICATION RESULTS:\n{json.dumps(replication_results, indent=2)[:5000]}\n\n"
-                "Assess:\n"
-                "1. Which findings replicated successfully?\n"
-                "2. Which findings failed to replicate?\n"
-                "3. What might explain any discrepancies?\n"
-                "4. Are the original conclusions still supported?\n\n"
-                "Return JSON with the same ReviewReport schema."
-            )}],
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        f"Compare these replication results against the original paper.\n\n"
+                        f"ORIGINAL PAPER:\n{original_paper[:5000]}\n\n"
+                        f"REPLICATION RESULTS:\n{json.dumps(replication_results, indent=2)[:5000]}\n\n"
+                        "Assess:\n"
+                        "1. Which findings replicated successfully?\n"
+                        "2. Which findings failed to replicate?\n"
+                        "3. What might explain any discrepancies?\n"
+                        "4. Are the original conclusions still supported?\n\n"
+                        "Return JSON with the same ReviewReport schema."
+                    ),
+                }
+            ],
             system="You are assessing a replication study. Be fair to both the original and replication.",
         )
 

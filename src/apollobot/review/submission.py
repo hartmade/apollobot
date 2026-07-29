@@ -104,35 +104,40 @@ class SubmissionReviewer:
 
         # Structured scoring
         scoring_resp = await self.llm.complete(
-            messages=[{"role": "user", "content": (
-                f"Score this manuscript on each dimension (1-10) with justification.\n\n"
-                f"MANUSCRIPT (excerpt):\n{manuscript_text[:6000]}\n\n"
-                f"BASE REVIEW SUMMARY:\n{base_report.summary}\n\n"
-                "Score these dimensions:\n"
-                "1. statistical_rigor — p-values, effect sizes, corrections, appropriate tests\n"
-                "2. methodological_soundness — controls, confounders, experimental design\n"
-                "3. reproducibility — provenance, data availability, code availability\n"
-                "4. novelty — contribution beyond existing literature\n"
-                "5. clarity — writing quality, logical flow, figures\n\n"
-                f"Provenance badge: {badge.value} "
-                f"({'full ApolloBot provenance chain' if badge == ProvenanceBadge.GOLD else 'limited/no provenance'})\n\n"
-                "Return ONLY JSON:\n"
-                "{\n"
-                '  "recommendation": "accept|minor_revision|major_revision|reject",\n'
-                '  "confidence": 0.0-1.0,\n'
-                '  "scores": [\n'
-                '    {"dimension": "statistical_rigor", "score": 1-10, "justification": "..."},\n'
-                '    {"dimension": "methodological_soundness", "score": 1-10, "justification": "..."},\n'
-                '    {"dimension": "reproducibility", "score": 1-10, "justification": "..."},\n'
-                '    {"dimension": "novelty", "score": 1-10, "justification": "..."},\n'
-                '    {"dimension": "clarity", "score": 1-10, "justification": "..."}\n'
-                "  ],\n"
-                '  "key_issues": [{"severity": "critical|major|minor", "description": "..."}],\n'
-                '  "strengths": ["..."],\n'
-                '  "revision_requests": ["specific request 1", "..."],\n'
-                '  "summary": "2-3 sentence overall assessment"\n'
-                "}"
-            )}],
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        f"Score this manuscript on each dimension (1-10) with justification.\n\n"
+                        f"MANUSCRIPT (excerpt):\n{manuscript_text[:6000]}\n\n"
+                        f"BASE REVIEW SUMMARY:\n{base_report.summary}\n\n"
+                        "Score these dimensions:\n"
+                        "1. statistical_rigor — p-values, effect sizes, corrections, appropriate tests\n"
+                        "2. methodological_soundness — controls, confounders, experimental design\n"
+                        "3. reproducibility — provenance, data availability, code availability\n"
+                        "4. novelty — contribution beyond existing literature\n"
+                        "5. clarity — writing quality, logical flow, figures\n\n"
+                        f"Provenance badge: {badge.value} "
+                        f"({'full ApolloBot provenance chain' if badge == ProvenanceBadge.GOLD else 'limited/no provenance'})\n\n"
+                        "Return ONLY JSON:\n"
+                        "{\n"
+                        '  "recommendation": "accept|minor_revision|major_revision|reject",\n'
+                        '  "confidence": 0.0-1.0,\n'
+                        '  "scores": [\n'
+                        '    {"dimension": "statistical_rigor", "score": 1-10, "justification": "..."},\n'
+                        '    {"dimension": "methodological_soundness", "score": 1-10, "justification": "..."},\n'
+                        '    {"dimension": "reproducibility", "score": 1-10, "justification": "..."},\n'
+                        '    {"dimension": "novelty", "score": 1-10, "justification": "..."},\n'
+                        '    {"dimension": "clarity", "score": 1-10, "justification": "..."}\n'
+                        "  ],\n"
+                        '  "key_issues": [{"severity": "critical|major|minor", "description": "..."}],\n'
+                        '  "strengths": ["..."],\n'
+                        '  "revision_requests": ["specific request 1", "..."],\n'
+                        '  "summary": "2-3 sentence overall assessment"\n'
+                        "}"
+                    ),
+                }
+            ],
             system=(
                 "You are a senior journal editor scoring a manuscript for peer review. "
                 "Be rigorous but fair. Gold-badge submissions with full provenance "
@@ -161,9 +166,7 @@ class SubmissionReviewer:
                 "summary": base_report.summary,
             }
 
-        scores = [
-            DimensionScore(**s) for s in review_data.get("scores", [])
-        ]
+        scores = [DimensionScore(**s) for s in review_data.get("scores", [])]
 
         return SubmissionReviewReport(
             session_id=session_id,
@@ -179,9 +182,7 @@ class SubmissionReviewer:
         )
 
     @staticmethod
-    def _assess_provenance(
-        provenance_path: Path | None, session_id: str
-    ) -> ProvenanceBadge:
+    def _assess_provenance(provenance_path: Path | None, session_id: str) -> ProvenanceBadge:
         """Determine provenance badge based on available provenance data."""
         if not session_id or not provenance_path:
             return ProvenanceBadge.BRONZE
@@ -219,10 +220,7 @@ class SubmissionReviewer:
 
         for s in report.scores:
             bar = "#" * int(s.score) + "." * (10 - int(s.score))
-            lines.append(
-                f"- **{s.dimension.replace('_', ' ').title()}**: "
-                f"{s.score:.0f}/10 [{bar}]"
-            )
+            lines.append(f"- **{s.dimension.replace('_', ' ').title()}**: {s.score:.0f}/10 [{bar}]")
             if s.justification:
                 lines.append(f"  {s.justification}")
 

@@ -48,6 +48,7 @@ from apollobot.server.registry import ActiveSession, SessionRegistry
 @pytest.fixture
 def mock_config():
     from apollobot.core import ApolloConfig, APIConfig, UserIdentity, ComputeConfig
+
     return ApolloConfig(
         identity=UserIdentity(name="Test User"),
         api=APIConfig(
@@ -99,24 +100,29 @@ class TestSmoke_Imports:
 
     def test_import_server_package(self):
         from apollobot.server import create_server, run_server
+
         assert callable(create_server)
         assert callable(run_server)
 
     def test_import_app_module(self):
         from apollobot.server.app import mcp, app_lifespan
+
         assert mcp is not None
         assert callable(app_lifespan)
 
     def test_import_registry(self):
         from apollobot.server.registry import SessionRegistry, ActiveSession
+
         assert callable(SessionRegistry)
 
     def test_import_checkpoint(self):
         from apollobot.server.checkpoint import MCPCheckpointHandler
+
         assert callable(MCPCheckpointHandler)
 
     def test_import_errors(self):
         from apollobot.server.errors import error_response
+
         err = error_response("TEST", "test msg")
         assert err["error"] is True
         assert err["error_code"] == "TEST"
@@ -128,32 +134,49 @@ class TestSmoke_ServerBoot:
 
     def test_server_name(self):
         from apollobot.server import create_server
+
         server = create_server()
         assert server.name == "apollobot"
 
     def test_server_has_instructions(self):
         from apollobot.server import create_server
+
         server = create_server()
         assert "ApolloBot" in (server.instructions or "")
 
     def test_exactly_20_tools(self):
         from apollobot.server import create_server
+
         server = create_server()
         tools = server._tool_manager._tools
         assert len(tools) == 20, f"Expected 20 tools, got {len(tools)}: {list(tools.keys())}"
 
     def test_all_tool_names_present(self):
         from apollobot.server import create_server
+
         server = create_server()
         names = set(server._tool_manager._tools.keys())
         expected = {
-            "create_mission", "run_discover", "run_translate",
-            "run_implement", "run_commercialize", "run_pipeline",
-            "step_phase", "get_session_status", "get_phase_result",
-            "approve_checkpoint", "search_literature", "query_data_source",
-            "list_data_servers", "run_analysis_step", "draft_section",
-            "review_manuscript", "get_provenance", "get_cost",
-            "list_sessions", "load_session",
+            "create_mission",
+            "run_discover",
+            "run_translate",
+            "run_implement",
+            "run_commercialize",
+            "run_pipeline",
+            "step_phase",
+            "get_session_status",
+            "get_phase_result",
+            "approve_checkpoint",
+            "search_literature",
+            "query_data_source",
+            "list_data_servers",
+            "run_analysis_step",
+            "draft_section",
+            "review_manuscript",
+            "get_provenance",
+            "get_cost",
+            "list_sessions",
+            "load_session",
         }
         missing = expected - names
         extra = names - expected
@@ -161,13 +184,15 @@ class TestSmoke_ServerBoot:
 
     def test_lifespan_creates_registry(self):
         from apollobot.server.app import app_lifespan, mcp
+
         async def _check():
             with patch("apollobot.server.app._load_config") as mock_cfg:
                 mock_cfg.return_value = MagicMock()
                 async with app_lifespan(mcp) as ctx:
                     assert "registry" in ctx
                     assert isinstance(ctx["registry"], SessionRegistry)
-        asyncio.get_event_loop().run_until_complete(_check())
+
+        asyncio.run(_check())
 
 
 @pytest.mark.smoke
@@ -176,22 +201,26 @@ class TestSmoke_CLIServe:
 
     def test_serve_command_registered(self):
         from apollobot.cli import main
+
         assert "serve" in main.commands
 
     def test_serve_transport_choices(self):
         from apollobot.cli import main
+
         serve_cmd = main.commands["serve"]
         transport = next(p for p in serve_cmd.params if p.name == "transport")
         assert set(transport.type.choices) == {"stdio", "streamable-http", "sse"}
 
     def test_serve_default_transport_is_stdio(self):
         from apollobot.cli import main
+
         serve_cmd = main.commands["serve"]
         transport = next(p for p in serve_cmd.params if p.name == "transport")
         assert transport.default == "stdio"
 
     def test_serve_has_host_and_port(self):
         from apollobot.cli import main
+
         serve_cmd = main.commands["serve"]
         param_names = {p.name for p in serve_cmd.params}
         assert "host" in param_names
@@ -205,6 +234,7 @@ class TestSmoke_EveryToolCallable:
 
     async def test_create_mission(self, mock_ctx):
         from apollobot.server.app import create_mission
+
         with patch("apollobot.server.registry.Orchestrator"):
             result = await create_mission(mock_ctx, objective="Smoke test")
         assert isinstance(result, dict)
@@ -212,60 +242,70 @@ class TestSmoke_EveryToolCallable:
 
     async def test_run_discover(self, mock_ctx):
         from apollobot.server.app import run_discover
+
         result = await run_discover(mock_ctx, session_id="no-such-id")
         assert isinstance(result, dict)
         assert result["error"] is True
 
     async def test_run_translate(self, mock_ctx):
         from apollobot.server.app import run_translate
+
         result = await run_translate(mock_ctx, session_id="no-such-id")
         assert isinstance(result, dict)
         assert result["error"] is True
 
     async def test_run_implement(self, mock_ctx):
         from apollobot.server.app import run_implement
+
         result = await run_implement(mock_ctx, session_id="no-such-id")
         assert isinstance(result, dict)
         assert result["error"] is True
 
     async def test_run_commercialize(self, mock_ctx):
         from apollobot.server.app import run_commercialize
+
         result = await run_commercialize(mock_ctx, session_id="no-such-id")
         assert isinstance(result, dict)
         assert result["error"] is True
 
     async def test_run_pipeline(self, mock_ctx):
         from apollobot.server.app import run_pipeline
+
         result = await run_pipeline(mock_ctx, session_id="no-such-id")
         assert isinstance(result, dict)
         assert result["error"] is True
 
     async def test_step_phase(self, mock_ctx):
         from apollobot.server.app import step_phase
+
         result = await step_phase(mock_ctx, session_id="no-such-id")
         assert isinstance(result, dict)
         assert result["error"] is True
 
     async def test_get_session_status(self, mock_ctx):
         from apollobot.server.app import get_session_status
+
         result = await get_session_status(mock_ctx, session_id="no-such-id")
         assert isinstance(result, dict)
         assert result["error"] is True
 
     async def test_get_phase_result(self, mock_ctx):
         from apollobot.server.app import get_phase_result
+
         result = await get_phase_result(mock_ctx, "no-such-id", "analysis")
         assert isinstance(result, dict)
         assert result["error"] is True
 
     async def test_approve_checkpoint(self, mock_ctx):
         from apollobot.server.app import approve_checkpoint
+
         result = await approve_checkpoint(mock_ctx, "no-such-id")
         assert isinstance(result, dict)
         assert result["error"] is True
 
     async def test_search_literature(self, mock_ctx):
         from apollobot.server.app import search_literature
+
         with patch("apollobot.mcp.MCPClient") as MockClient:
             client = MockClient.return_value
             client.get_servers.return_value = []
@@ -275,6 +315,7 @@ class TestSmoke_EveryToolCallable:
 
     async def test_query_data_source(self, mock_ctx):
         from apollobot.server.app import query_data_source
+
         with patch("apollobot.mcp.MCPClient") as MockClient:
             client = MockClient.return_value
             client.get_servers.return_value = []
@@ -283,12 +324,14 @@ class TestSmoke_EveryToolCallable:
 
     async def test_list_data_servers(self, mock_ctx):
         from apollobot.server.app import list_data_servers
+
         result = await list_data_servers(mock_ctx)
         assert isinstance(result, dict)
         assert "domains" in result
 
     async def test_run_analysis_step(self, mock_ctx):
         from apollobot.server.app import run_analysis_step
+
         result = await run_analysis_step(
             mock_ctx, session_id="no-such-id", step_name="x", description="y"
         )
@@ -297,36 +340,42 @@ class TestSmoke_EveryToolCallable:
 
     async def test_draft_section(self, mock_ctx):
         from apollobot.server.app import draft_section
+
         result = await draft_section(mock_ctx, session_id="no-such-id", section="abstract")
         assert isinstance(result, dict)
         assert result["error"] is True
 
     async def test_review_manuscript(self, mock_ctx):
         from apollobot.server.app import review_manuscript
+
         result = await review_manuscript(mock_ctx, "no-such-id")
         assert isinstance(result, dict)
         assert result["error"] is True
 
     async def test_get_provenance(self, mock_ctx):
         from apollobot.server.app import get_provenance
+
         result = await get_provenance(mock_ctx, "no-such-id")
         assert isinstance(result, dict)
         assert result["error"] is True
 
     async def test_get_cost(self, mock_ctx):
         from apollobot.server.app import get_cost
+
         result = await get_cost(mock_ctx, "no-such-id")
         assert isinstance(result, dict)
         assert result["error"] is True
 
     async def test_list_sessions(self, mock_ctx):
         from apollobot.server.app import list_sessions
+
         result = await list_sessions(mock_ctx)
         assert isinstance(result, dict)
         assert "total_active" in result
 
     async def test_load_session(self, mock_ctx):
         from apollobot.server.app import load_session
+
         result = await load_session(mock_ctx, "no-such-id")
         assert isinstance(result, dict)
         assert result["error"] is True
@@ -343,8 +392,11 @@ class TestEval_FullSessionLifecycle:
 
     async def test_lifecycle(self, mock_ctx, registry):
         from apollobot.server.app import (
-            create_mission, get_session_status, get_cost,
-            get_provenance, list_sessions,
+            create_mission,
+            get_session_status,
+            get_cost,
+            get_provenance,
+            list_sessions,
         )
 
         # 1. Create mission
@@ -423,8 +475,10 @@ class TestEval_PlanningPhaseStepThrough:
             MockOrch.return_value = mock_orch
 
             created = await create_mission(
-                mock_ctx, objective="Effect of sleep on memory consolidation",
-                mode="hypothesis", domain="bioinformatics",
+                mock_ctx,
+                objective="Effect of sleep on memory consolidation",
+                mode="hypothesis",
+                domain="bioinformatics",
             )
 
         sid = created["session_id"]
@@ -448,7 +502,9 @@ class TestEval_PlanningPhaseStepThrough:
 
         assert result["phase"] == "planning"
         assert result["status"] == "completed"
-        assert "sleep" in result["plan_summary"].lower() or "memory" in result["plan_summary"].lower()
+        assert (
+            "sleep" in result["plan_summary"].lower() or "memory" in result["plan_summary"].lower()
+        )
         assert result["next_phase"] == "literature_review"
         assert result["analysis_steps_count"] == 2
         assert result["data_requirements_count"] == 1
@@ -457,7 +513,9 @@ class TestEval_PlanningPhaseStepThrough:
         # Verify status updated
         status = await get_session_status(mock_ctx, sid)
         assert status["has_plan"] is True
-        assert "planning" in [p if isinstance(p, str) else p.value for p in status["completed_phases"]]
+        assert "planning" in [
+            p if isinstance(p, str) else p.value for p in status["completed_phases"]
+        ]
 
 
 @pytest.mark.evaluation
@@ -476,7 +534,7 @@ class TestEval_CheckpointOrchestration:
         # 2. Simulate pipeline checkpoint
         active_session.pending_checkpoint = {
             "phase": "pipeline_translate",
-            "summary": "Discovery complete — translation score: 8.2. Proceed to Translate?"
+            "summary": "Discovery complete — translation score: 8.2. Proceed to Translate?",
         }
         active_session.checkpoint_event = asyncio.Event()
 
@@ -519,6 +577,7 @@ class TestEval_CheckpointOrchestration:
 
     async def test_checkpoint_no_pending_returns_error(self, mock_ctx, active_session):
         from apollobot.server.app import approve_checkpoint
+
         result = await approve_checkpoint(mock_ctx, active_session.session_id)
         assert result["error"] is True
         assert result["error_code"] == PHASE_NOT_AVAILABLE
@@ -532,13 +591,38 @@ class TestEval_LiteratureSearchRealistic:
         from apollobot.server.app import search_literature
 
         pubmed_papers = [
-            {"title": "CRISPR gene editing review", "doi": "10.1/crispr1", "year": "2024", "source": "pubmed"},
-            {"title": "Base editing advances", "doi": "10.1/base1", "year": "2023", "source": "pubmed"},
-            {"title": "Prime editing efficiency", "doi": "10.1/prime1", "year": "2024", "source": "pubmed"},
+            {
+                "title": "CRISPR gene editing review",
+                "doi": "10.1/crispr1",
+                "year": "2024",
+                "source": "pubmed",
+            },
+            {
+                "title": "Base editing advances",
+                "doi": "10.1/base1",
+                "year": "2023",
+                "source": "pubmed",
+            },
+            {
+                "title": "Prime editing efficiency",
+                "doi": "10.1/prime1",
+                "year": "2024",
+                "source": "pubmed",
+            },
         ]
         arxiv_papers = [
-            {"title": "CRISPR gene editing review", "doi": "10.1/crispr1", "year": "2024", "source": "arxiv"},  # dupe
-            {"title": "ML-guided gene editing", "doi": "10.1/ml1", "year": "2025", "source": "arxiv"},
+            {
+                "title": "CRISPR gene editing review",
+                "doi": "10.1/crispr1",
+                "year": "2024",
+                "source": "arxiv",
+            },  # dupe
+            {
+                "title": "ML-guided gene editing",
+                "doi": "10.1/ml1",
+                "year": "2025",
+                "source": "arxiv",
+            },
         ]
 
         call_count = 0
@@ -656,12 +740,12 @@ class TestEval_DataServerDiscovery:
             all_names = {s["name"] for s in all_result["domains"][domain_name]}
             per_names = {s["name"] for s in per_domain["servers"]}
             assert all_names == per_names, (
-                f"Mismatch for domain '{domain_name}': "
-                f"all={all_names}, per={per_names}"
+                f"Mismatch for domain '{domain_name}': all={all_names}, per={per_names}"
             )
 
     async def test_known_domains_present(self, mock_ctx):
         from apollobot.server.app import list_data_servers
+
         result = await list_data_servers(mock_ctx)
         known = {"bioinformatics", "physics", "cs_ml", "comp_chem", "economics"}
         actual = set(result["domains"].keys())
@@ -675,13 +759,18 @@ class TestEval_SessionSaveLoadRoundtrip:
 
     async def test_roundtrip(self, mock_ctx, registry, sample_mission, temp_dir):
         from apollobot.server.app import (
-            create_mission, get_session_status, load_session, list_sessions,
+            create_mission,
+            get_session_status,
+            load_session,
+            list_sessions,
         )
 
         # Create and populate a session
         with patch("apollobot.server.registry.Orchestrator"):
             created = await create_mission(
-                mock_ctx, objective="Roundtrip test", domain="physics",
+                mock_ctx,
+                objective="Roundtrip test",
+                domain="physics",
                 compute_budget=30.0,
             )
         sid = created["session_id"]
@@ -783,7 +872,9 @@ class TestEval_ConcurrentSessions:
         for obj, dom in zip(objectives, domains):
             with patch("apollobot.server.registry.Orchestrator"):
                 result = await create_mission(
-                    mock_ctx, objective=obj, domain=dom,
+                    mock_ctx,
+                    objective=obj,
+                    domain=dom,
                 )
             assert "error" not in result
             sids.append(result["session_id"])
@@ -806,6 +897,7 @@ class TestEval_ConcurrentSessions:
         active.session.cost.record_llm_call(5000, 2000, 1.50)
 
         from apollobot.server.app import get_cost
+
         cost0 = await get_cost(mock_ctx, sids[0])
         cost1 = await get_cost(mock_ctx, sids[1])
         cost2 = await get_cost(mock_ctx, sids[2])
@@ -821,6 +913,7 @@ class TestEval_ErrorRecovery:
 
     async def test_create_mission_malformed_yaml(self, mock_ctx):
         from apollobot.server.app import create_mission
+
         result = await create_mission(
             mock_ctx, objective="Test", mission_yaml="{{bad yaml::\n  ]]]"
         )
@@ -829,38 +922,42 @@ class TestEval_ErrorRecovery:
 
     async def test_step_phase_invalid_name(self, mock_ctx, active_session):
         from apollobot.server.app import step_phase
+
         result = await step_phase(mock_ctx, active_session.session_id, phase="not_real")
         assert result["error"] is True
         assert result["error_code"] == INVALID_INPUT
 
     async def test_step_phase_non_discover_phase(self, mock_ctx, active_session):
         from apollobot.server.app import step_phase
+
         result = await step_phase(mock_ctx, active_session.session_id, phase="translate_assess")
         assert result["error"] is True
         assert result["error_code"] == INVALID_INPUT
 
     async def test_get_phase_result_not_run(self, mock_ctx, active_session):
         from apollobot.server.app import get_phase_result
+
         result = await get_phase_result(mock_ctx, active_session.session_id, "analysis")
         assert result["error"] is True
         assert result["error_code"] == PHASE_NOT_AVAILABLE
 
     async def test_draft_section_invalid_section(self, mock_ctx, active_session):
         from apollobot.server.app import draft_section
-        result = await draft_section(
-            mock_ctx, active_session.session_id, section="bibliography"
-        )
+
+        result = await draft_section(mock_ctx, active_session.session_id, section="bibliography")
         assert result["error"] is True
         assert result["error_code"] == INVALID_INPUT
 
     async def test_review_manuscript_no_plan(self, mock_ctx, active_session):
         from apollobot.server.app import review_manuscript
+
         result = await review_manuscript(mock_ctx, active_session.session_id)
         assert result["error"] is True
         assert result["error_code"] == PHASE_NOT_AVAILABLE
 
     async def test_create_mission_negative_budget(self, mock_ctx):
         from apollobot.server.app import create_mission
+
         with patch("apollobot.server.registry.Orchestrator"):
             result = await create_mission(mock_ctx, objective="Test", compute_budget=-5.0)
         assert result["error"] is True
@@ -869,6 +966,7 @@ class TestEval_ErrorRecovery:
     async def test_search_literature_mcp_init_crash(self, mock_ctx):
         """MCPClient constructor throws — should return structured error."""
         from apollobot.server.app import search_literature
+
         with patch("apollobot.mcp.MCPClient") as MockClient:
             MockClient.side_effect = RuntimeError("MCP init explosion")
             result = await search_literature(mock_ctx, query="test")
@@ -877,6 +975,7 @@ class TestEval_ErrorRecovery:
 
     async def test_load_session_nonexistent(self, mock_ctx):
         from apollobot.server.app import load_session
+
         result = await load_session(mock_ctx, "absolutely-no-such-session-xyz")
         assert result["error"] is True
 
@@ -899,9 +998,7 @@ class TestEval_PhaseResultRetrieval:
             ],
         )
 
-        result = await get_phase_result(
-            mock_ctx, active_session.session_id, "literature_review"
-        )
+        result = await get_phase_result(mock_ctx, active_session.session_id, "literature_review")
 
         assert result["phase"] == "literature_review"
         assert result["summary"] == "Reviewed 42 papers on CRISPR delivery"
@@ -921,13 +1018,9 @@ class TestEval_PhaseResultRetrieval:
             (Phase.LITERATURE_REVIEW, "Lit review done", [{"paper": "A"}]),
         ]:
             active_session.session.begin_phase(phase)
-            active_session.session.complete_phase(
-                phase, summary=summary, findings=findings
-            )
+            active_session.session.complete_phase(phase, summary=summary, findings=findings)
 
-        plan_result = await get_phase_result(
-            mock_ctx, active_session.session_id, "planning"
-        )
+        plan_result = await get_phase_result(mock_ctx, active_session.session_id, "planning")
         lit_result = await get_phase_result(
             mock_ctx, active_session.session_id, "literature_review"
         )
@@ -986,9 +1079,7 @@ class TestEval_MCPCheckpointHandler:
     async def test_handler_with_progress_callback(self):
         handler = MCPCheckpointHandler()
         calls = []
-        handler.add_progress_callback(
-            lambda phase, summary: calls.append((phase, summary))
-        )
+        handler.add_progress_callback(lambda phase, summary: calls.append((phase, summary)))
         # notify calls callbacks
         await handler.notify("lit_review", "searching...")
         # Callbacks are awaited, so for sync lambdas this actually errors

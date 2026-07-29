@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 # Materials Project — REST API (requires MP_API_KEY)
 # ---------------------------------------------------------------------------
 
+
 async def _materials_project_search(
     api_base: str,
     params: dict[str, Any],
@@ -53,14 +54,16 @@ async def _materials_project_search(
 
     materials = []
     for item in items[:limit]:
-        materials.append({
-            "material_id": item.get("material_id", ""),
-            "formula": item.get("formula_pretty", ""),
-            "energy_above_hull": item.get("energy_above_hull"),
-            "band_gap": item.get("band_gap"),
-            "density": item.get("density"),
-            "source": "materials-project",
-        })
+        materials.append(
+            {
+                "material_id": item.get("material_id", ""),
+                "formula": item.get("formula_pretty", ""),
+                "energy_above_hull": item.get("energy_above_hull"),
+                "band_gap": item.get("band_gap"),
+                "density": item.get("density"),
+                "source": "materials-project",
+            }
+        )
 
     logger.info("Materials Project fallback: %d materials for query=%r", len(materials), query)
     return {"materials": materials}
@@ -72,6 +75,7 @@ async def _materials_project_search(
 
 # Pre-parsed subset of NIST fundamental constants (no JSON API available).
 # The CGI endpoint returns HTML/text; we parse the structured text output.
+
 
 async def _nist_search(
     api_base: str,
@@ -116,13 +120,15 @@ async def _nist_search(
 
             # Basic validation: value should contain a digit
             if name_part and value_part and any(c.isdigit() for c in value_part):
-                constants.append({
-                    "name": name_part,
-                    "value": value_part,
-                    "uncertainty": uncertainty_part,
-                    "unit": unit_part,
-                    "source": "nist",
-                })
+                constants.append(
+                    {
+                        "name": name_part,
+                        "value": value_part,
+                        "uncertainty": uncertainty_part,
+                        "unit": unit_part,
+                        "source": "nist",
+                    }
+                )
 
     if not constants:
         return {
@@ -140,6 +146,7 @@ async def _nist_search(
 # ---------------------------------------------------------------------------
 # CERN Open Data — REST API
 # ---------------------------------------------------------------------------
+
 
 async def _cern_opendata_search(
     api_base: str,
@@ -172,14 +179,16 @@ async def _cern_opendata_search(
         # Extract collision info from metadata
         collision_info = metadata.get("collision_information", {})
 
-        datasets.append({
-            "recid": safe_int(hit.get("id", metadata.get("recid", 0))),
-            "title": metadata.get("title", ""),
-            "experiment": metadata.get("experiment", ""),
-            "collision_type": collision_info.get("type", ""),
-            "collision_energy": collision_info.get("energy", ""),
-            "source": "cern-opendata",
-        })
+        datasets.append(
+            {
+                "recid": safe_int(hit.get("id", metadata.get("recid", 0))),
+                "title": metadata.get("title", ""),
+                "experiment": metadata.get("experiment", ""),
+                "collision_type": collision_info.get("type", ""),
+                "collision_energy": collision_info.get("energy", ""),
+                "source": "cern-opendata",
+            }
+        )
 
     logger.info("CERN Open Data fallback: %d datasets for query=%r", len(datasets), query)
     return {"datasets": datasets}

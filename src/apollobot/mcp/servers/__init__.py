@@ -1,4 +1,5 @@
 """MCP server definitions."""
+
 from apollobot.mcp.servers.builtin import (
     ALL_BUILTIN_SERVERS,
     DOMAIN_PACKS,

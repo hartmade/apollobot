@@ -18,14 +18,16 @@ class TestResearchImplementor:
     def mock_llm(self):
         llm = MagicMock()
         response = MagicMock()
-        response.text = json.dumps({
-            "directories": ["src", "tests", "docs"],
-            "files": [
-                {"path": "src/main.py", "description": "Main entry point"},
-                {"path": "src/utils.py", "description": "Utility functions"},
-            ],
-            "dependencies": ["numpy", "pandas"],
-        })
+        response.text = json.dumps(
+            {
+                "directories": ["src", "tests", "docs"],
+                "files": [
+                    {"path": "src/main.py", "description": "Main entry point"},
+                    {"path": "src/utils.py", "description": "Utility functions"},
+                ],
+                "dependencies": ["numpy", "pandas"],
+            }
+        )
         response.provider = "anthropic"
         response.model = "claude-sonnet"
         response.input_tokens = 100
@@ -80,6 +82,7 @@ class TestResearchImplementor:
         """Test that scaffold creates project structure."""
         # Reconstruct report for the implementor
         from apollobot.core.translation import TranslationReport
+
         session.translation_report = TranslationReport.model_validate(session.translation_report)
 
         summary, findings = await implementor._scaffold(session)
@@ -93,6 +96,7 @@ class TestResearchImplementor:
     async def test_scaffold_creates_directories(self, implementor, session):
         """Test that scaffold creates the specified directories."""
         from apollobot.core.translation import TranslationReport
+
         session.translation_report = TranslationReport.model_validate(session.translation_report)
 
         await implementor._scaffold(session)
@@ -106,6 +110,7 @@ class TestResearchImplementor:
     async def test_build_phase(self, implementor, session, mock_llm):
         """Test that build generates implementation files."""
         from apollobot.core.translation import TranslationReport
+
         session.translation_report = TranslationReport.model_validate(session.translation_report)
 
         # First scaffold
@@ -121,9 +126,12 @@ class TestResearchImplementor:
     async def test_test_phase(self, implementor, session, mock_llm):
         """Test that test phase generates test suite."""
         from apollobot.core.translation import TranslationReport
+
         session.translation_report = TranslationReport.model_validate(session.translation_report)
 
-        mock_llm.complete.return_value.text = "```python\nimport pytest\n\ndef test_example():\n    assert True\n```"
+        mock_llm.complete.return_value.text = (
+            "```python\nimport pytest\n\ndef test_example():\n    assert True\n```"
+        )
 
         summary, findings = await implementor._test(session)
         assert "Test suite" in summary
@@ -132,6 +140,7 @@ class TestResearchImplementor:
     async def test_document_phase(self, implementor, session, mock_llm):
         """Test that document phase generates README."""
         from apollobot.core.translation import TranslationReport
+
         session.translation_report = TranslationReport.model_validate(session.translation_report)
 
         mock_llm.complete.return_value.text = "# Test API\n\nA test implementation."
@@ -144,6 +153,7 @@ class TestResearchImplementor:
     async def test_package_phase(self, implementor, session, mock_llm):
         """Test that package phase generates deployment config."""
         from apollobot.core.translation import TranslationReport
+
         session.translation_report = TranslationReport.model_validate(session.translation_report)
 
         # Create scaffold first
@@ -158,14 +168,17 @@ class TestResearchImplementor:
     async def test_validate_phase(self, implementor, session, mock_llm):
         """Test that validate phase checks implementation."""
         from apollobot.core.translation import TranslationReport
+
         session.translation_report = TranslationReport.model_validate(session.translation_report)
 
-        mock_llm.complete.return_value.text = json.dumps({
-            "validation_status": "pass",
-            "quality_score": 8,
-            "gaps": [],
-            "recommendations": ["Add more tests"],
-        })
+        mock_llm.complete.return_value.text = json.dumps(
+            {
+                "validation_status": "pass",
+                "quality_score": 8,
+                "gaps": [],
+                "recommendations": ["Add more tests"],
+            }
+        )
 
         summary, findings = await implementor._validate(session)
         assert "Validation" in summary

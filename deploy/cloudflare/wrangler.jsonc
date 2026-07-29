@@ -1,0 +1,87 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "frontier-science-apollo",
+  "main": "src/index.ts",
+  "account_id": "5a15702c2c36b5b248fafea8ea19a8c7",
+  "compatibility_date": "2026-07-28",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "observability": {
+    "enabled": true
+  },
+  "ai": {
+    "binding": "AI"
+  },
+  "containers": [
+    {
+      "class_name": "ApolloService",
+      "image": "../../Dockerfile.cloudflare-service",
+      "max_instances": 1,
+      "instance_type": "standard-1",
+      "image_vars": {
+        "APOLLOBOT_RELEASE_SHA": "eed24d4a864a"
+      }
+    },
+    {
+      "class_name": "ApolloSandbox",
+      "image": "../../Dockerfile.cloudflare-sandbox",
+      "max_instances": 8,
+      "instance_type": "standard-1",
+      "image_vars": {
+        "APOLLOBOT_RELEASE_SHA": "eed24d4a864a"
+      }
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "APOLLO_SERVICE", "class_name": "ApolloService" },
+      { "name": "APOLLO_SANDBOX", "class_name": "ApolloSandbox" },
+      { "name": "APOLLO_CHECKPOINT", "class_name": "ApolloCheckpoint" }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["ApolloService", "ApolloSandbox", "ApolloCheckpoint"]
+    }
+  ],
+  "vars": {
+    "APOLLOBOT_ENV": "production",
+    "APOLLOBOT_API_HOST": "0.0.0.0",
+    "APOLLOBOT_API_PORT": "8765",
+    "APOLLOBOT_SERVICE_DB": "/var/lib/apollobot/service.db",
+    "APOLLOBOT_OUTPUT_DIR": "/var/lib/apollobot/output",
+    "APOLLOBOT_SANDBOX_MODE": "cloudflare",
+    "APOLLOBOT_SANDBOX_URL": "http://sandbox.internal",
+    "APOLLOBOT_CHECKPOINT_URL": "http://checkpoint.internal/state",
+    "APOLLOBOT_CLOUDFLARE_INTERNAL": "1",
+    "APOLLOBOT_ALLOW_LOCAL_EXECUTION": "0",
+    "APOLLOBOT_SANDBOX_NETWORK": "off",
+    "APOLLOBOT_SANDBOX_OUTPUT_BYTES": "2000000",
+    "APOLLOBOT_BUILD_SHA": "eed24d4a864a",
+    "APOLLOBOT_MODEL_PROVIDER": "openai",
+    "OPENAI_BASE_URL": "https://openrouter.ai/api/v1",
+    "OPENAI_MODEL": "openai/gpt-oss-120b",
+    "OPENROUTER_PROVIDER_TAG": "groq",
+    "OPENROUTER_DATA_COLLECTION": "deny",
+    "OPENROUTER_SITE_URL": "https://frontier-science.ai",
+    "OPENROUTER_APP_NAME": "Frontier Science",
+    "OPENROUTER_REASONING_EFFORT": "low",
+    "OPENROUTER_REASONING_EXCLUDE": "1",
+    "APOLLOBOT_MODEL_BILLING_PROVIDER": "openrouter/groq",
+    "APOLLOBOT_MODEL_INPUT_COST_PER_M": "0.15",
+    "APOLLOBOT_MODEL_CACHED_INPUT_COST_PER_M": "0.075",
+    "APOLLOBOT_MODEL_OUTPUT_COST_PER_M": "0.60",
+    "APOLLOBOT_MODEL_MAX_OUTPUT_TOKENS": "4096",
+    "APOLLOBOT_WORKERS_AI_MODEL": "@cf/moonshotai/kimi-k2.6",
+    "APOLLOBOT_FRAMER_TIMEOUT": "45",
+    "APOLLOBOT_PLANNER_TIMEOUT": "40",
+    "APOLLOBOT_MAX_LITERATURE_QUERIES": "2",
+    "APOLLOBOT_MAX_DATA_REQUIREMENTS": "2",
+    "APOLLOBOT_MAX_ANALYSIS_STEPS": "2",
+    "FRONTIER_PLATFORM_URL": "https://frontier-science-journal.frontier-science-ai.workers.dev",
+    "APOLLOBOT_ALLOWED_ORIGIN": "https://frontier-science-journal.frontier-science-ai.workers.dev",
+    "APOLLOBOT_MAX_CONCURRENT_JOBS": "3",
+    "APOLLOBOT_MAX_CONCURRENT_PLANS": "3"
+  }
+}

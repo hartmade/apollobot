@@ -103,8 +103,10 @@ PUBMED_EMPTY_SEARCH_JSON = {
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _mock_http_get(responses: dict[str, httpx.Response]):
     """Create a mock httpx client whose .get() returns based on URL prefix."""
+
     async def _get(url, params=None, **kwargs):
         for key, resp in responses.items():
             if key in url:
@@ -124,6 +126,7 @@ def _response(text: str = "", json_data: dict | None = None, status: int = 200):
     )
     if json_data is not None:
         import json as _json
+
         resp._content = _json.dumps(json_data).encode()
     else:
         resp._content = text.encode()
@@ -134,11 +137,14 @@ def _response(text: str = "", json_data: dict | None = None, status: int = 200):
 # arXiv tests
 # ---------------------------------------------------------------------------
 
+
 class TestArxivFallback:
     @pytest.mark.asyncio
     async def test_basic_search(self):
         http = _mock_http_get({"query": _response(text=ARXIV_XML)})
-        result = await _arxiv_search("http://export.arxiv.org/api", {"query": "machine learning"}, http)
+        result = await _arxiv_search(
+            "http://export.arxiv.org/api", {"query": "machine learning"}, http
+        )
         papers = result["papers"]
         assert len(papers) == 2
         assert papers[0]["title"] == "Test Paper on ML"
@@ -165,6 +171,7 @@ class TestArxivFallback:
 # ---------------------------------------------------------------------------
 # Semantic Scholar tests
 # ---------------------------------------------------------------------------
+
 
 class TestSemanticScholarFallback:
     @pytest.mark.asyncio
@@ -203,13 +210,16 @@ class TestSemanticScholarFallback:
 # PubMed tests
 # ---------------------------------------------------------------------------
 
+
 class TestPubMedFallback:
     @pytest.mark.asyncio
     async def test_basic_search(self):
-        http = _mock_http_get({
-            "esearch": _response(json_data=PUBMED_SEARCH_JSON),
-            "efetch": _response(text=PUBMED_FETCH_XML),
-        })
+        http = _mock_http_get(
+            {
+                "esearch": _response(json_data=PUBMED_SEARCH_JSON),
+                "efetch": _response(text=PUBMED_FETCH_XML),
+            }
+        )
         result = await _pubmed_search(
             "https://eutils.ncbi.nlm.nih.gov/entrez/eutils", {"query": "cancer"}, http
         )
@@ -223,9 +233,11 @@ class TestPubMedFallback:
 
     @pytest.mark.asyncio
     async def test_empty_search(self):
-        http = _mock_http_get({
-            "esearch": _response(json_data=PUBMED_EMPTY_SEARCH_JSON),
-        })
+        http = _mock_http_get(
+            {
+                "esearch": _response(json_data=PUBMED_EMPTY_SEARCH_JSON),
+            }
+        )
         result = await _pubmed_search(
             "https://eutils.ncbi.nlm.nih.gov/entrez/eutils", {"query": "zzzzz"}, http
         )
@@ -234,10 +246,12 @@ class TestPubMedFallback:
     @pytest.mark.asyncio
     async def test_missing_fields(self):
         """Article with minimal fields still parses."""
-        http = _mock_http_get({
-            "esearch": _response(json_data=PUBMED_SEARCH_JSON),
-            "efetch": _response(text=PUBMED_FETCH_XML),
-        })
+        http = _mock_http_get(
+            {
+                "esearch": _response(json_data=PUBMED_SEARCH_JSON),
+                "efetch": _response(text=PUBMED_FETCH_XML),
+            }
+        )
         result = await _pubmed_search(
             "https://eutils.ncbi.nlm.nih.gov/entrez/eutils", {"query": "test"}, http
         )
@@ -251,19 +265,24 @@ class TestPubMedFallback:
 # Dispatcher tests
 # ---------------------------------------------------------------------------
 
+
 class TestFallbackDispatcher:
     @pytest.mark.asyncio
     async def test_routes_to_arxiv(self):
         http = _mock_http_get({"query": _response(text=ARXIV_XML)})
-        result = await fallback_query("arxiv", "http://export.arxiv.org/api", {"query": "test"}, http)
+        result = await fallback_query(
+            "arxiv", "http://export.arxiv.org/api", {"query": "test"}, http
+        )
         assert len(result["papers"]) == 2
 
     @pytest.mark.asyncio
     async def test_routes_to_semantic_scholar(self):
         http = _mock_http_get({"paper/search": _response(json_data=S2_JSON)})
         result = await fallback_query(
-            "semantic-scholar", "https://api.semanticscholar.org/graph/v1",
-            {"query": "test"}, http,
+            "semantic-scholar",
+            "https://api.semanticscholar.org/graph/v1",
+            {"query": "test"},
+            http,
         )
         assert len(result["papers"]) == 2
 

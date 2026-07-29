@@ -124,7 +124,7 @@ from apollobot.mcp.servers.builtin import BuiltinServer
 NEW_SERVERS = [
     BuiltinServer(
         name="new-data-source",
-        url="https://mcp.frontierscience.ai/new-source",
+        proxy_path="new-source",
         description="Description of the data source",
         domain="your_domain",
         category="data",

@@ -77,14 +77,9 @@ class NotificationRouter:
         for ch in bidirectional:
             await self._safe_send(ch, event)
 
-        response_tasks = [
-            asyncio.create_task(ch.wait_for_response(event))
-            for ch in bidirectional
-        ]
+        response_tasks = [asyncio.create_task(ch.wait_for_response(event)) for ch in bidirectional]
 
-        done, pending = await asyncio.wait(
-            response_tasks, return_when=asyncio.FIRST_COMPLETED
-        )
+        done, pending = await asyncio.wait(response_tasks, return_when=asyncio.FIRST_COMPLETED)
 
         # Cancel remaining
         for task in pending:
@@ -115,9 +110,7 @@ class NotificationRouter:
             except Exception:
                 logger.exception("Failed to disconnect channel %s", ch.name)
 
-    async def _safe_send(
-        self, channel: NotificationChannel, event: NotificationEvent
-    ) -> None:
+    async def _safe_send(self, channel: NotificationChannel, event: NotificationEvent) -> None:
         """Send with error handling so one channel failure doesn't break others."""
         try:
             await channel.send(event)
