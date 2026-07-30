@@ -20,7 +20,7 @@ class ModelRoute:
 
 
 DEFAULT_MODEL_ID = "openai/gpt-oss-120b"
-MODEL_CATALOG_VERSION = "frontier-model-catalog/2026-07-29"
+MODEL_CATALOG_VERSION = "frontier-model-catalog/2026-07-30"
 
 _MODEL_CATALOG = {
     DEFAULT_MODEL_ID: ModelRoute(
@@ -118,6 +118,22 @@ _MODEL_CATALOG = {
         cached_input_cost_per_million=0.50,
         input_cost_per_million=5.00,
         output_cost_per_million=30.00,
+    ),
+    "openai/gpt-5.6-terra": ModelRoute(
+        model_id="openai/gpt-5.6-terra",
+        provider_tag="openai",
+        billing_provider="openrouter/openai",
+        cached_input_cost_per_million=0.20,
+        input_cost_per_million=2.00,
+        output_cost_per_million=12.00,
+    ),
+    "openai/gpt-5.6-luna": ModelRoute(
+        model_id="openai/gpt-5.6-luna",
+        provider_tag="openai",
+        billing_provider="openrouter/openai",
+        cached_input_cost_per_million=0.02,
+        input_cost_per_million=0.20,
+        output_cost_per_million=1.20,
     ),
 }
 

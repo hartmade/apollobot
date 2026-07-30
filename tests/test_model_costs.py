@@ -21,6 +21,8 @@ EXPECTED_ROUTES = {
     "moonshotai/kimi-k3": "moonshotai/mxfp4",
     "anthropic/claude-opus-5": "anthropic",
     "openai/gpt-5.6-sol": "openai",
+    "openai/gpt-5.6-terra": "openai",
+    "openai/gpt-5.6-luna": "openai",
 }
 
 
