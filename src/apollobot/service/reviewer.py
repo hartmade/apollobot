@@ -153,9 +153,16 @@ class AutomatedReviewWorker:
         body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
         timestamp = str(int(time.time()))
         nonce = str(uuid4())
-        signature = hmac.new(
+        review_id = str(payload.get("review_id") or "")
+        binding = f"review:{review_id}" if review_id else f"reviewer:{self.worker_id}"
+        resource_key = hmac.new(
             self.secret,
-            f"{timestamp}.{nonce}.".encode() + body,
+            f"frontier-apollo-binding-v1:{binding}".encode(),
+            hashlib.sha256,
+        ).digest()
+        signature = hmac.new(
+            resource_key,
+            f"{timestamp}.{nonce}.{binding}.".encode() + body,
             hashlib.sha256,
         ).hexdigest()
         return await client.post(
@@ -166,5 +173,6 @@ class AutomatedReviewWorker:
                 "x-apollo-signature": f"sha256={signature}",
                 "x-apollo-timestamp": timestamp,
                 "x-apollo-nonce": nonce,
+                "x-apollo-binding": binding,
             },
         )

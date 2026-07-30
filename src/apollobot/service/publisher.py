@@ -107,7 +107,10 @@ class EventPublisher:
                 },
             }
             try:
-                presign = await self._signed_post(client, self.artifact_endpoint, request_payload)
+                binding = f"investigation:{artifact['investigation_id']}"
+                presign = await self._signed_post(
+                    client, self.artifact_endpoint, request_payload, binding
+                )
                 self.last_artifact_status = presign.status_code
                 if presign.status_code >= 300:
                     self.store.mark_artifact_attempt(artifact["id"])
@@ -136,6 +139,7 @@ class EventPublisher:
                         "checksum_sha256": artifact["checksum_sha256"],
                         "size_bytes": artifact["size_bytes"],
                     },
+                    binding,
                 )
                 self.last_artifact_status = confirmation.status_code
                 if confirmation.status_code >= 300:
@@ -168,7 +172,9 @@ class EventPublisher:
                 response = await client.post(
                     self.endpoint,
                     content=body,
-                    headers=self._signed_headers(body),
+                    headers=self._signed_headers(
+                        body, f"investigation:{event['investigation_id']}"
+                    ),
                 )
                 self.last_event_status = response.status_code
                 if 200 <= response.status_code < 300:
@@ -189,24 +195,31 @@ class EventPublisher:
         client: httpx.AsyncClient,
         endpoint: str,
         payload: dict[str, object],
+        binding: str,
     ) -> httpx.Response:
         body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
         return await client.post(
             endpoint,
             content=body,
-            headers=self._signed_headers(body),
+            headers=self._signed_headers(body, binding),
         )
 
-    def _signed_headers(self, body: bytes) -> dict[str, str]:
+    def _signed_headers(self, body: bytes, binding: str) -> dict[str, str]:
         timestamp = str(int(time.time()))
         nonce = str(uuid4())
-        signed = f"{timestamp}.{nonce}.".encode() + body
-        signature = hmac.new(self.secret, signed, hashlib.sha256).hexdigest()
+        resource_key = hmac.new(
+            self.secret,
+            f"frontier-apollo-binding-v1:{binding}".encode(),
+            hashlib.sha256,
+        ).digest()
+        signed = f"{timestamp}.{nonce}.{binding}.".encode() + body
+        signature = hmac.new(resource_key, signed, hashlib.sha256).hexdigest()
         return {
             "content-type": "application/json",
             "x-apollo-signature": f"sha256={signature}",
             "x-apollo-timestamp": timestamp,
             "x-apollo-nonce": nonce,
+            "x-apollo-binding": binding,
         }
 
     def _artifact_path(self, artifact: dict[str, object]) -> Path | None:

@@ -1107,10 +1107,18 @@ async def test_publisher_streams_artifact_to_durable_storage(tmp_path: Path) -> 
             uploaded.append(await request.aread())
             return httpx.Response(200, json={"Key": "research-artifacts/path"})
         body = await request.aread()
+        binding = request.headers["x-apollo-binding"]
+        assert binding == f"investigation:{investigation_id}"
+        resource_key = hmac.new(
+            secret.encode(),
+            f"frontier-apollo-binding-v1:{binding}".encode(),
+            hashlib.sha256,
+        ).digest()
         signed = (
             f"{request.headers['x-apollo-timestamp']}.{request.headers['x-apollo-nonce']}."
+            f"{binding}."
         ).encode() + body
-        expected = hmac.new(secret.encode(), signed, hashlib.sha256).hexdigest()
+        expected = hmac.new(resource_key, signed, hashlib.sha256).hexdigest()
         assert request.headers["x-apollo-signature"] == f"sha256={expected}"
         payload = json.loads(body)
         if payload["stage"] == "presign":
@@ -1213,12 +1221,25 @@ async def test_automated_review_worker_completes_leased_job(tmp_path: Path) -> N
 
     async def handler(request: httpx.Request) -> httpx.Response:
         body = await request.aread()
+        payload = json.loads(body)
+        binding = request.headers["x-apollo-binding"]
+        expected_binding = (
+            f"reviewer:{worker.worker_id}"
+            if payload["stage"] == "claim"
+            else f"review:{payload['review_id']}"
+        )
+        assert binding == expected_binding
+        resource_key = hmac.new(
+            secret.encode(),
+            f"frontier-apollo-binding-v1:{binding}".encode(),
+            hashlib.sha256,
+        ).digest()
         signed = (
             f"{request.headers['x-apollo-timestamp']}.{request.headers['x-apollo-nonce']}."
+            f"{binding}."
         ).encode() + body
-        expected = hmac.new(secret.encode(), signed, hashlib.sha256).hexdigest()
+        expected = hmac.new(resource_key, signed, hashlib.sha256).hexdigest()
         assert request.headers["x-apollo-signature"] == f"sha256={expected}"
-        payload = json.loads(body)
         if payload["stage"] == "claim":
             return httpx.Response(
                 200,
