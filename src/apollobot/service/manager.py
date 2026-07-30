@@ -952,22 +952,50 @@ class InvestigationManager:
         if investigation_root not in resolved_session.parents:
             raise ValueError("Run output escaped its investigation artifact root")
         restricted_paths: set[str] = set()
+        redistributable_raw_paths: set[str] = set()
+        manifest_valid = False
         access_manifest = session_dir / "data" / "access-manifest.json"
         if access_manifest.is_file():
             try:
                 manifest = json.loads(access_manifest.read_text())
-                restricted_paths = {
-                    str(item.get("local_path"))
-                    for item in manifest.get("datasets", [])
-                    if item.get("local_path") and not item.get("redistribution_allowed", False)
-                }
+                if (
+                    not isinstance(manifest, dict)
+                    or manifest.get("schema") != "frontier-data-access/v1"
+                ):
+                    raise ValueError("Unsupported data access manifest")
+                datasets = manifest.get("datasets")
+                if not isinstance(datasets, list):
+                    raise ValueError("Invalid data access manifest datasets")
+                for item in datasets:
+                    if not isinstance(item, dict):
+                        raise ValueError("Invalid data access manifest entry")
+                    local_path = item.get("local_path")
+                    if not local_path:
+                        continue
+                    normalized = Path(str(local_path))
+                    if normalized.is_absolute() or ".." in normalized.parts:
+                        raise ValueError("Data access manifest path escaped the run")
+                    relative = normalized.as_posix().removeprefix("./")
+                    if item.get("redistribution_allowed") is True:
+                        redistributable_raw_paths.add(relative)
+                    else:
+                        restricted_paths.add(relative)
+                manifest_valid = True
             except (OSError, ValueError, TypeError):
+                # A missing or malformed rights declaration is not permission.
+                # Raw datasets fail closed; generated code, figures, logs, and
+                # the manifest itself remain available for reproducibility.
                 restricted_paths = set()
+                redistributable_raw_paths = set()
         for path in session_dir.rglob("*"):
             if not path.is_file():
                 continue
             session_relative = str(path.resolve().relative_to(resolved_session))
             if session_relative in restricted_paths:
+                continue
+            if session_relative.startswith("data/raw/") and (
+                not manifest_valid or session_relative not in redistributable_raw_paths
+            ):
                 continue
             relative = str(path.resolve().relative_to(investigation_root))
             artifact_id = str(uuid4())

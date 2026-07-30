@@ -324,6 +324,78 @@ async def test_artifact_capture_excludes_raw_data_without_redistribution_rights(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "manifest_content",
+    [
+        "{not-json",
+        json.dumps({"schema": "unknown", "datasets": []}),
+        json.dumps({"schema": "frontier-data-access/v1", "datasets": {}}),
+    ],
+)
+async def test_artifact_capture_fails_closed_for_malformed_rights_manifest(
+    tmp_path: Path,
+    manifest_content: str,
+) -> None:
+    store = ServiceStore(tmp_path / "service.db")
+    manager = InvestigationManager(store, config=ApolloConfig(), output_dir=tmp_path / "runs")
+    check = await QuestionFramer(ApolloConfig()).frame(
+        "Can a malformed data-rights declaration expose source-controlled raw data?"
+    )
+    investigation_id = manager.create(check)["id"]
+    session_dir = tmp_path / "runs" / investigation_id / "attempts" / "attempt-0001" / "session"
+    raw_dir = session_dir / "data" / "raw"
+    raw_dir.mkdir(parents=True)
+    (raw_dir / "source-controlled.json").write_text('{"private":true}')
+    (session_dir / "data" / "access-manifest.json").write_text(manifest_content)
+    figures = session_dir / "figures"
+    figures.mkdir()
+    (figures / "generated.png").write_bytes(b"generated-result")
+
+    artifacts = await manager._capture_artifacts(investigation_id, session_dir)
+    labels = {artifact["label"] for artifact in artifacts}
+    assert "source-controlled.json" not in labels
+    assert "generated.png" in labels
+    assert "access-manifest.json" in labels
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_artifact_capture_requires_raw_file_to_be_explicitly_allowlisted(
+    tmp_path: Path,
+) -> None:
+    store = ServiceStore(tmp_path / "service.db")
+    manager = InvestigationManager(store, config=ApolloConfig(), output_dir=tmp_path / "runs")
+    check = await QuestionFramer(ApolloConfig()).frame(
+        "Are only explicitly redistributable dataset files included in a public artifact set?"
+    )
+    investigation_id = manager.create(check)["id"]
+    session_dir = tmp_path / "runs" / investigation_id / "attempts" / "attempt-0001" / "session"
+    raw_dir = session_dir / "data" / "raw"
+    raw_dir.mkdir(parents=True)
+    (raw_dir / "allowed.json").write_text('{"public":true}')
+    (raw_dir / "omitted.json").write_text('{"not_declared":true}')
+    (session_dir / "data" / "access-manifest.json").write_text(
+        json.dumps(
+            {
+                "schema": "frontier-data-access/v1",
+                "datasets": [
+                    {
+                        "local_path": "data/raw/allowed.json",
+                        "redistribution_allowed": True,
+                    }
+                ],
+            }
+        )
+    )
+
+    artifacts = await manager._capture_artifacts(investigation_id, session_dir)
+    labels = {artifact["label"] for artifact in artifacts}
+    assert "allowed.json" in labels
+    assert "omitted.json" not in labels
+    store.close()
+
+
+@pytest.mark.asyncio
 async def test_manager_recovers_interrupted_work_without_silent_rerun(tmp_path: Path) -> None:
     store = ServiceStore(tmp_path / "service.db")
     manager = InvestigationManager(store, config=ApolloConfig(), output_dir=tmp_path / "runs")
