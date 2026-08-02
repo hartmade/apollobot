@@ -13,15 +13,16 @@ from uuid import uuid4
 import httpx
 import pytest
 
+from apollobot.agents.executor import ResearchExecutor
 from apollobot.agents.planner import AnalysisStep, DataRequirement, ResearchPlan
 from apollobot.core import APIConfig, ApolloConfig
 from apollobot.core.mission import Mission
-from apollobot.core.session import Phase
+from apollobot.core.session import Phase, Session
 from apollobot.review.submission import DimensionScore, SubmissionReviewReport
 from apollobot.service.framer import QuestionFramer
 from apollobot.service.manager import InvestigationManager
 from apollobot.service.model_catalog import resolve_model_route
-from apollobot.service.models import ServiceEvent
+from apollobot.service.models import ContextAttachment, ServiceEvent, parse_context_attachments
 from apollobot.service.publisher import EventPublisher
 from apollobot.service.reviewer import AutomatedReviewWorker
 from apollobot.service.store import ServiceStore
@@ -71,6 +72,193 @@ async def test_question_framer_returns_bounded_local_plan() -> None:
     assert check.apollo_domain == "physics"
     assert len(check.proposed_steps) == 5
     assert check.source == "local-framer"
+
+
+@pytest.mark.asyncio
+async def test_question_framer_uses_value_free_dataset_context() -> None:
+    attachment = ContextAttachment(
+        id=str(uuid4()),
+        kind="dataset",
+        label="Climate observations",
+        source_url="https://huggingface.co/datasets/example/climate",
+        dataset_profile={
+            "schema_version": "frontier-dataset-profile/v1",
+            "categories": ["climate", "time-series"],
+            "use_policy": "analysis_allowed",
+        },
+        analysis_allowed=True,
+    )
+    check = await QuestionFramer(ApolloConfig()).frame(
+        "Does urban tree cover reduce nighttime heat?",
+        [attachment],
+    )
+    assert "1 attached dataset" in check.rationale
+    assert "1 is cleared for analysis" in check.rationale
+    assert "attached dataset profiles" in check.proposed_steps[2].detail.lower()
+
+
+def test_context_manifest_is_bounded_and_strips_private_urls() -> None:
+    attachment_id = str(uuid4())
+    raw = {
+        "id": attachment_id,
+        "kind": "dataset",
+        "label": "Uploaded observations",
+        "media_type": "text/csv",
+        "size_bytes": 12,
+        "checksum_sha256": "a" * 64,
+        "private_url": "https://storage.example.org/signed.csv?secret=hidden",
+        "private_url_expires_in": 900,
+        "dataset_profile": {"schema_version": "frontier-dataset-profile/v1"},
+        "analysis_allowed": True,
+    }
+    parsed = parse_context_attachments([raw])
+    assert parsed[0].planner_manifest()["analysis_allowed"] is True
+    assert "private_url" not in parsed[0].planner_manifest()
+    with pytest.raises(ValueError, match="unique"):
+        parse_context_attachments([raw, raw])
+    with pytest.raises(ValueError, match="cache path"):
+        ContextAttachment.model_validate({**raw, "local_path": "../escape.csv"})
+
+
+@pytest.mark.asyncio
+async def test_manager_caches_and_stages_an_approved_uploaded_dataset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = b"year,value\n2025,7\n"
+    attachment_id = str(uuid4())
+    context = {
+        "id": attachment_id,
+        "kind": "dataset",
+        "label": "observations.csv",
+        "media_type": "text/csv",
+        "size_bytes": len(payload),
+        "checksum_sha256": hashlib.sha256(payload).hexdigest(),
+        "private_url": "https://storage.example.org/signed.csv",
+        "private_url_expires_in": 900,
+        "dataset_profile": {
+            "schema_version": "frontier-dataset-profile/v1",
+            "use_policy": "analysis_allowed",
+        },
+        "analysis_allowed": True,
+        "local_path": "injected/path.csv",
+        "cache_status": "verified",
+    }
+
+    class FakeClient:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        async def __aenter__(self) -> FakeClient:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        async def get(self, url: str) -> httpx.Response:
+            return httpx.Response(200, content=payload, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr("apollobot.service.manager.httpx.AsyncClient", FakeClient)
+    store = ServiceStore(tmp_path / "service.db")
+    manager = InvestigationManager(store, config=ApolloConfig(), output_dir=tmp_path / "runs")
+    check = await QuestionFramer(ApolloConfig()).frame(
+        "Does the uploaded time series contain a directional change?"
+    )
+    created = manager.create(check, context_attachments=[context])
+    stored = store.get_investigation(created["id"])
+    assert stored is not None
+    assert stored["context_attachments"][0].get("local_path") is None
+    mission = manager._mission(created["id"], stored)
+    await manager._cache_private_dataset_context(mission)
+    cached = mission.metadata["context_datasets"][0]
+    assert cached["cache_status"] == "verified"
+    assert "private_url" not in cached
+    cached_path = tmp_path / "runs" / created["id"] / cached["local_path"]
+    assert cached_path.read_bytes() == payload
+
+    mission.metadata["context_attachments"] = mission.metadata["context_datasets"]
+    await manager._cache_private_dataset_context(mission)
+    execution_root = tmp_path / "runs" / created["id"] / "attempts" / "attempt-0001" / created["id"]
+    manager._stage_private_dataset_context(created["id"], execution_root)
+    staged = execution_root / cached["local_path"]
+    assert staged.read_bytes() == payload
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_executor_uses_staged_dataset_and_records_source_lineage(tmp_path: Path) -> None:
+    attachment_id = str(uuid4())
+    payload = b"year,value\n2025,7\n"
+    mission = Mission(
+        id=str(uuid4()),
+        title="Attached time series",
+        objective="Measure the directional change in the attached time series.",
+        domain="physics",
+        metadata={
+            "output_dir": str(tmp_path),
+            "context_datasets": [
+                {
+                    "id": attachment_id,
+                    "kind": "dataset",
+                    "label": "observations.csv",
+                    "media_type": "text/csv",
+                    "checksum_sha256": hashlib.sha256(payload).hexdigest(),
+                    "analysis_allowed": True,
+                    "local_path": f"context/{attachment_id}/observations.csv",
+                    "dataset_profile": {
+                        "schema_version": "frontier-dataset-profile/v1",
+                        "access": {"mode": "private-upload"},
+                        "license": {
+                            "declared": None,
+                            "redistribution_allowed": False,
+                        },
+                    },
+                }
+            ],
+        },
+    )
+    session = Session(mission=mission)
+    session.init_directories()
+    source = session.session_dir / "context" / attachment_id / "observations.csv"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(payload)
+    plan = sample_plan(mission.id).model_copy(
+        update={
+            "data_requirements": [
+                DataRequirement(
+                    description="Researcher-provided observations",
+                    source_type="attached_dataset",
+                    query_params={"attachment_id": attachment_id},
+                    access_mode="access-controlled",
+                )
+            ]
+        }
+    )
+    lineage: list[dict[str, object]] = []
+
+    class FakeMcp:
+        def get_servers(self, domain: str | None = None) -> list[object]:
+            return []
+
+    class FakeProvenance:
+        def log_event(self, name: str, data: dict[str, object]) -> None:
+            pass
+
+        def log_data_transform(self, **data: object) -> None:
+            lineage.append(data)
+
+    executor = ResearchExecutor(
+        llm=SimpleNamespace(),  # type: ignore[arg-type]
+        mcp=FakeMcp(),  # type: ignore[arg-type]
+        provenance=FakeProvenance(),  # type: ignore[arg-type]
+    )
+    summary, acquired = await executor._acquire_data(session, plan)
+    assert summary == "Acquired 1 datasets from 1 requirements"
+    assert acquired[0]["source_attachment_id"] == attachment_id
+    assert acquired[0]["status"] == "acquired"
+    assert acquired[0]["checksum_sha256"] == hashlib.sha256(payload).hexdigest()
+    assert lineage[0]["source"] == f"frontier-context:{attachment_id}"
+    access = json.loads((session.session_dir / "data" / "access-manifest.json").read_text())
+    assert access["datasets"][0]["redistribution_allowed"] is False
 
 
 def test_question_framer_normalizes_partial_model_output() -> None:
@@ -320,6 +508,76 @@ async def test_artifact_capture_excludes_raw_data_without_redistribution_rights(
     assert "restricted.json" not in labels
     assert "public.json" in labels
     assert "access-manifest.json" in labels
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_artifacts_persist_dataset_profile_and_transformation_lineage(
+    tmp_path: Path,
+) -> None:
+    attachment_id = str(uuid4())
+    store = ServiceStore(tmp_path / "service.db")
+    manager = InvestigationManager(store, config=ApolloConfig(), output_dir=tmp_path / "runs")
+    check = await QuestionFramer(ApolloConfig()).frame(
+        "Does the attached time series contain a directional change?"
+    )
+    created = manager.create(
+        check,
+        context_attachments=[
+            {
+                "id": attachment_id,
+                "kind": "dataset",
+                "label": "observations.csv",
+                "dataset_profile": {
+                    "schema_version": "frontier-dataset-profile/v1",
+                    "categories": ["time-series"],
+                    "use_policy": "analysis_allowed",
+                },
+                "analysis_allowed": True,
+            }
+        ],
+    )
+    stored = store.get_investigation(created["id"])
+    assert stored is not None
+    mission = manager._mission(created["id"], stored)
+    mission.metadata["context_datasets"] = mission.metadata["context_attachments"]
+    store.update_investigation(created["id"], mission_json=mission.model_dump_json())
+    session_dir = (
+        tmp_path
+        / "runs"
+        / created["id"]
+        / "attempts"
+        / "attempt-0001"
+        / created["id"]
+    )
+    provenance = session_dir / "provenance"
+    provenance.mkdir(parents=True)
+    (provenance / "data_lineage.json").write_text(
+        json.dumps(
+            [
+                {
+                    "source": f"frontier-context:{attachment_id}",
+                    "operation": "filter_missing_rows",
+                    "description": "Remove rows missing the declared outcome.",
+                    "input_hash": "sha256:input",
+                    "output_hash": "sha256:output",
+                    "parameters": {"attachment_id": attachment_id, "columns": ["value"]},
+                    "script_ref": "analysis/scripts/filter.py",
+                }
+            ]
+        )
+    )
+    processed = session_dir / "data" / "processed" / "clean.csv"
+    processed.parent.mkdir(parents=True)
+    processed.write_text("year,value\n2025,7\n")
+
+    artifacts = await manager._capture_artifacts(created["id"], session_dir)
+    derived = next(item for item in artifacts if item["label"] == "clean.csv")
+    assert derived["metadata"]["source_artifact_id"] == attachment_id
+    assert derived["metadata"]["dataset_profile"]["categories"] == ["time-series"]
+    assert derived["metadata"]["transformation_chain"][0]["operation"] == "filter_missing_rows"
+    pending = next(item for item in store.pending_artifacts() if item["id"] == derived["id"])
+    assert pending["metadata"]["source_artifact_id"] == attachment_id
     store.close()
 
 

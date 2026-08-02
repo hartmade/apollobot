@@ -94,6 +94,8 @@ class EventPublisher:
             if not path:
                 self.store.mark_artifact_attempt(artifact["id"])
                 continue
+            raw_metadata = artifact.get("metadata")
+            metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
             request_payload = {
                 "stage": "presign",
                 "investigation_id": artifact["investigation_id"],
@@ -104,6 +106,9 @@ class EventPublisher:
                     "media_type": artifact["media_type"],
                     "size_bytes": artifact["size_bytes"],
                     "checksum_sha256": artifact["checksum_sha256"],
+                    "source_artifact_id": metadata.get("source_artifact_id"),
+                    "dataset_profile": metadata.get("dataset_profile", {}),
+                    "transformation_chain": metadata.get("transformation_chain", []),
                 },
             }
             try:

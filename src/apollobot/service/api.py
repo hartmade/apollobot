@@ -22,7 +22,7 @@ from apollobot import __version__
 from apollobot.core import APOLLO_HOME, load_config
 from apollobot.service.framer import QuestionFramer
 from apollobot.service.manager import InvestigationManager
-from apollobot.service.models import QuestionCheck
+from apollobot.service.models import QuestionCheck, parse_context_attachments
 from apollobot.service.publisher import EventPublisher
 from apollobot.service.reviewer import AutomatedReviewWorker
 from apollobot.service.store import ServiceStore
@@ -354,7 +354,10 @@ async def question_check(request: web.Request) -> web.Response:
     payload = await request.json()
     question = payload.get("question", "") if isinstance(payload, dict) else ""
     try:
-        check = await request.app[FRAMER_KEY].frame(question)
+        context_attachments = parse_context_attachments(
+            payload.get("context_attachments") if isinstance(payload, dict) else None
+        )
+        check = await request.app[FRAMER_KEY].frame(question, context_attachments)
     except ValueError as error:
         raise web.HTTPBadRequest(
             text=json.dumps({"error": str(error)}), content_type="application/json"
@@ -374,6 +377,7 @@ async def create_investigation(request: web.Request) -> web.Response:
             investigation_id=payload.get("id"),
             model_id=payload.get("model_id"),
             provider_tag=payload.get("provider_tag"),
+            context_attachments=payload.get("context_attachments"),
         )
     except ValueError as error:
         raise web.HTTPUnprocessableEntity(

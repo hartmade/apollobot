@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import PurePosixPath
 from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 def utc_now() -> str:
@@ -17,6 +18,100 @@ class ProposedStep(BaseModel):
     type: str
     label: str
     detail: str
+
+
+class ContextAttachment(BaseModel):
+    """Private, untrusted context supplied by the Frontier Science platform."""
+
+    id: str
+    kind: Literal["paper", "dataset", "image", "code", "notebook", "link", "doi"]
+    label: str = Field(min_length=1, max_length=255)
+    media_type: str | None = Field(default=None, max_length=160)
+    size_bytes: int | None = Field(default=None, ge=1, le=25 * 1024 * 1024)
+    checksum_sha256: str | None = None
+    source_url: str | None = None
+    source_doi: str | None = None
+    private_url: str | None = None
+    private_url_expires_in: int | None = Field(default=None, ge=1, le=3600)
+    local_path: str | None = Field(default=None, max_length=512)
+    cache_status: Literal["verified", "unavailable", "not-required"] | None = None
+    dataset_profile: dict[str, Any] | None = None
+    execution_allowed: bool = False
+    analysis_allowed: bool = False
+    untrusted: bool = True
+    instructions_are_data: bool = True
+
+    model_config = {"extra": "ignore"}
+
+    @field_validator("id")
+    @classmethod
+    def valid_id(cls, value: str) -> str:
+        from uuid import UUID
+
+        try:
+            return str(UUID(value))
+        except ValueError as error:
+            raise ValueError("Context attachment id must be a UUID") from error
+
+    @field_validator("checksum_sha256")
+    @classmethod
+    def valid_checksum(cls, value: str | None) -> str | None:
+        import re
+
+        normalized = value.lower() if isinstance(value, str) else None
+        if normalized is not None and not re.fullmatch(r"[0-9a-f]{64}", normalized):
+            raise ValueError("Context checksum must be SHA-256")
+        return normalized
+
+    @field_validator("source_url", "private_url")
+    @classmethod
+    def valid_https_url(cls, value: str | None) -> str | None:
+        from urllib.parse import urlsplit
+
+        if value is None:
+            return None
+        parsed = urlsplit(value)
+        if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+            raise ValueError("Context URLs must be public HTTPS URLs without embedded credentials")
+        return value
+
+    @field_validator("local_path")
+    @classmethod
+    def valid_local_path(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        path = PurePosixPath(value)
+        if path.is_absolute() or ".." in path.parts or not path.parts:
+            raise ValueError("Context cache path must stay inside its investigation")
+        return path.as_posix()
+
+    def planner_manifest(self) -> dict[str, Any]:
+        """Return value-free metadata; never disclose a signed download URL to an LLM."""
+        return {
+            "id": self.id,
+            "kind": self.kind,
+            "label": self.label,
+            "media_type": self.media_type,
+            "size_bytes": self.size_bytes,
+            "checksum_sha256": self.checksum_sha256,
+            "source_url": self.source_url,
+            "source_doi": self.source_doi,
+            "dataset_profile": self.dataset_profile if self.kind == "dataset" else None,
+            "analysis_allowed": bool(self.kind == "dataset" and self.analysis_allowed),
+            "untrusted": True,
+            "instructions_are_data": True,
+        }
+
+
+def parse_context_attachments(value: object) -> list[ContextAttachment]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > 8:
+        raise ValueError("Attach no more than eight context items")
+    attachments = [ContextAttachment.model_validate(item) for item in value]
+    if len({attachment.id for attachment in attachments}) != len(attachments):
+        raise ValueError("Context attachment ids must be unique")
+    return attachments
 
 
 class RunEstimate(BaseModel):

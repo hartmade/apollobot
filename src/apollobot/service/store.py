@@ -70,6 +70,7 @@ class ServiceStore:
                 model_id TEXT NOT NULL DEFAULT 'openai/gpt-oss-120b',
                 model_provider_tag TEXT NOT NULL DEFAULT 'groq',
                 check_json TEXT NOT NULL,
+                context_json TEXT NOT NULL DEFAULT '[]',
                 mission_json TEXT,
                 plan_json TEXT,
                 result_json TEXT,
@@ -117,6 +118,7 @@ class ServiceStore:
                 storage_path TEXT,
                 uploaded_at TEXT,
                 upload_attempts INTEGER NOT NULL DEFAULT 0,
+                metadata_json TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL,
                 UNIQUE(investigation_id, path)
             )""",
@@ -195,6 +197,10 @@ class ServiceStore:
                     "ALTER TABLE investigations ADD COLUMN model_provider_tag TEXT NOT NULL "
                     "DEFAULT 'groq'"
                 )
+            if "context_json" not in columns:
+                self._db.execute(
+                    "ALTER TABLE investigations ADD COLUMN context_json TEXT NOT NULL DEFAULT '[]'"
+                )
             event_columns = {row["name"] for row in self._db.execute("PRAGMA table_info(events)")}
             if "published_at" not in event_columns:
                 self._db.execute("ALTER TABLE events ADD COLUMN published_at TEXT")
@@ -213,6 +219,10 @@ class ServiceStore:
                 self._db.execute(
                     "ALTER TABLE artifacts ADD COLUMN upload_attempts INTEGER NOT NULL DEFAULT 0"
                 )
+            if "metadata_json" not in artifact_columns:
+                self._db.execute(
+                    "ALTER TABLE artifacts ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'"
+                )
 
     def create_investigation(self, payload: dict[str, Any], nodes: list[ResearchNode]) -> None:
         now = utc_now()
@@ -221,8 +231,8 @@ class ServiceStore:
                 """INSERT INTO investigations
                 (id, user_id, title, objective, domain, mode, status, current_node,
                  budget_usd, cost_usd, engine, model_id, model_provider_tag,
-                 check_json, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'apollobot', ?, ?, ?, ?, ?)""",
+                 check_json, context_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'apollobot', ?, ?, ?, ?, ?, ?)""",
                 (
                     payload["id"],
                     payload.get("user_id"),
@@ -236,6 +246,7 @@ class ServiceStore:
                     payload["model_id"],
                     payload["model_provider_tag"],
                     json.dumps(payload["check"]),
+                    json.dumps(payload.get("context_attachments", [])),
                     now,
                     now,
                 ),
@@ -263,7 +274,7 @@ class ServiceStore:
 
     def ping(self) -> bool:
         with self._lock:
-            return self._db.execute("SELECT 1").fetchone()[0] == 1
+            return bool(self._db.execute("SELECT 1").fetchone()[0] == 1)
 
     def operational_metrics(self) -> dict[str, Any]:
         with self._lock:
@@ -330,10 +341,11 @@ class ServiceStore:
                 )
             ]
             artifacts = [
-                dict(row)
+                self._artifact(row)
                 for row in self._db.execute(
                     "SELECT id, artifact_type, label, path, media_type, size_bytes, "
-                    "checksum_sha256, storage_path, uploaded_at, created_at FROM artifacts "
+                    "checksum_sha256, storage_path, uploaded_at, metadata_json, created_at "
+                    "FROM artifacts "
                     "WHERE investigation_id = ? ORDER BY created_at",
                     (investigation_id,),
                 )
@@ -360,6 +372,7 @@ class ServiceStore:
                     (investigation_id,),
                 )
             ]
+        investigation.pop("context_attachments", None)
         return {
             "investigation": investigation,
             "nodes": nodes,
@@ -495,8 +508,8 @@ class ServiceStore:
             self._db.execute(
                 """INSERT OR IGNORE INTO artifacts
                 (id, investigation_id, artifact_type, label, path, media_type,
-                 size_bytes, checksum_sha256, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 size_bytes, checksum_sha256, metadata_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     artifact["id"],
                     investigation_id,
@@ -506,18 +519,19 @@ class ServiceStore:
                     artifact.get("media_type"),
                     artifact.get("size_bytes"),
                     artifact.get("checksum_sha256"),
+                    json.dumps(artifact.get("metadata", {})),
                     utc_now(),
                 ),
             )
             row = self._db.execute(
                 "SELECT id, investigation_id, artifact_type, label, path, media_type, "
-                "size_bytes, checksum_sha256, storage_path, uploaded_at, created_at "
+                "size_bytes, checksum_sha256, storage_path, uploaded_at, metadata_json, created_at "
                 "FROM artifacts WHERE investigation_id = ? AND path = ?",
                 (investigation_id, artifact["path"]),
             ).fetchone()
             if not row:
                 raise RuntimeError("Artifact insert did not persist")
-            result = dict(row)
+            result = self._artifact(row)
         self._changed()
         return result
 
@@ -659,23 +673,23 @@ class ServiceStore:
         with self._lock:
             row = self._db.execute(
                 "SELECT id, investigation_id, artifact_type, label, path, media_type, "
-                "size_bytes, checksum_sha256, storage_path, uploaded_at, created_at "
+                "size_bytes, checksum_sha256, storage_path, uploaded_at, metadata_json, created_at "
                 "FROM artifacts "
                 "WHERE investigation_id = ? AND id = ?",
                 (investigation_id, artifact_id),
             ).fetchone()
-            return dict(row) if row else None
+            return self._artifact(row) if row else None
 
     def pending_artifacts(self, limit: int = 25) -> list[dict[str, Any]]:
         with self._lock:
             rows = self._db.execute(
                 "SELECT id, investigation_id, artifact_type, label, path, media_type, "
-                "size_bytes, checksum_sha256, upload_attempts FROM artifacts "
+                "size_bytes, checksum_sha256, upload_attempts, metadata_json FROM artifacts "
                 "WHERE uploaded_at IS NULL AND upload_attempts < 20 "
                 "ORDER BY created_at LIMIT ?",
                 (limit,),
             )
-            return [dict(row) for row in rows]
+            return [self._artifact(row) for row in rows]
 
     def mark_artifact_uploaded(self, artifact_id: str, storage_path: str) -> None:
         with self._lock, self._db:
@@ -729,6 +743,7 @@ class ServiceStore:
     def _investigation(row: sqlite3.Row) -> dict[str, Any]:
         value = dict(row)
         value["check"] = json.loads(value.pop("check_json"))
+        value["context_attachments"] = json.loads(value.pop("context_json", "[]"))
         if value.get("mission_json"):
             value["mission"] = json.loads(value["mission_json"])
         if value.get("plan_json"):
@@ -738,6 +753,12 @@ class ServiceStore:
         value.pop("mission_json", None)
         value.pop("plan_json", None)
         value.pop("result_json", None)
+        return value
+
+    @staticmethod
+    def _artifact(row: sqlite3.Row) -> dict[str, Any]:
+        value = dict(row)
+        value["metadata"] = json.loads(value.pop("metadata_json", "{}"))
         return value
 
     @staticmethod

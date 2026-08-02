@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import shutil
 import traceback
 from typing import Any
 
@@ -338,7 +339,139 @@ class ResearchExecutor:
 
         acquired = []
         access_manifest: list[dict[str, Any]] = []
+        attached_by_id: dict[str, dict[str, Any]] = {}
+        raw_attached = session.mission.metadata.get("context_datasets", [])
+        for attached in raw_attached if isinstance(raw_attached, list) else []:
+            if not isinstance(attached, dict) or not isinstance(attached.get("id"), str):
+                continue
+            attachment_id = attached["id"]
+            attached_by_id[attachment_id] = attached
+            profile = attached.get("dataset_profile")
+            profile = profile if isinstance(profile, dict) else {}
+            license_block = profile.get("license")
+            license_block = license_block if isinstance(license_block, dict) else {}
+            dataset_info = {
+                "source": f"frontier-context:{attachment_id}",
+                "source_attachment_id": attachment_id,
+                "name": str(attached.get("label") or attachment_id),
+                "description": "Researcher-provided dataset context",
+                "status": "reference-only",
+                "access_mode": str((profile.get("access") or {}).get("mode") or "private-upload")
+                if isinstance(profile.get("access"), dict)
+                else "private-upload",
+                "license": str(license_block.get("declared") or "not-declared"),
+                "redistribution_allowed": False,
+                "dataset_profile": profile,
+                "checksum_sha256": attached.get("checksum_sha256"),
+                "source_url": attached.get("source_url"),
+                "availability_note": (
+                    "The immutable source and every derived transformation remain private unless "
+                    "a later publication review establishes redistribution rights."
+                ),
+            }
+            if attached.get("analysis_allowed") and attached.get("local_path"):
+                source_path = (session.session_dir / str(attached["local_path"])).resolve()
+                if (
+                    session.session_dir.resolve() not in source_path.parents
+                    or not source_path.is_file()
+                ):
+                    dataset_info["status"] = "unavailable"
+                    session.warnings.append(
+                        f"Attached dataset {attachment_id} was unavailable at execution time."
+                    )
+                else:
+                    destination_name = f"attached_{attachment_id[:8]}_{source_path.name}"
+                    destination = session.session_dir / "data" / "raw" / destination_name
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source_path, destination)
+                    payload = destination.read_bytes()
+                    dataset_info.update(
+                        status="acquired",
+                        local_path=str(destination.relative_to(session.session_dir)),
+                        checksum_sha256=hashlib.sha256(payload).hexdigest(),
+                    )
+                    acquired.append(dataset_info)
+                    self.provenance.log_data_transform(
+                        source=f"frontier-context:{attachment_id}",
+                        operation="register_attached_dataset",
+                        description="Verify and stage the immutable researcher-provided dataset.",
+                        input_data=payload,
+                        output_data=payload,
+                        parameters={
+                            "attachment_id": attachment_id,
+                            "source_checksum_sha256": attached.get("checksum_sha256"),
+                            "profile_schema": profile.get("schema_version"),
+                        },
+                    )
+            elif (
+                attached.get("analysis_allowed")
+                and isinstance(profile.get("connector"), str)
+                and profile.get("connector") in registered_servers
+            ):
+                connector = str(profile["connector"])
+                raw_access = profile.get("access")
+                access: dict[str, Any] = raw_access if isinstance(raw_access, dict) else {}
+                try:
+                    result = await self.mcp.query(
+                        connector,
+                        "query",
+                        {
+                            "query": (
+                                access.get("dataset_id")
+                                or attached.get("source_url")
+                                or attached.get("label")
+                            ),
+                            "dataset_id": access.get("dataset_id") or "",
+                        },
+                    )
+                    destination = (
+                        session.session_dir
+                        / "data"
+                        / "raw"
+                        / f"attached_{attachment_id[:8]}_{connector}.json"
+                    )
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    payload = json.dumps(result, indent=2, default=str).encode()
+                    destination.write_bytes(payload)
+                    dataset_info.update(
+                        status="acquired",
+                        local_path=str(destination.relative_to(session.session_dir)),
+                        checksum_sha256=hashlib.sha256(payload).hexdigest(),
+                        result_summary=str(result)[:500],
+                    )
+                    acquired.append(dataset_info)
+                    self.provenance.log_data_transform(
+                        source=f"frontier-context:{attachment_id}",
+                        operation="acquire_connected_dataset",
+                        description=(
+                            "Acquire the connected dataset through the "
+                            f"{connector} adapter."
+                        ),
+                        output_data=payload,
+                        parameters={"attachment_id": attachment_id, "connector": connector},
+                    )
+                except Exception as error:
+                    dataset_info["status"] = "unavailable"
+                    dataset_info["availability_note"] = (
+                        f"The {connector} connector could not acquire this dataset in the "
+                        "bounded run."
+                    )
+                    self.provenance.log_event(
+                        "attached_dataset_acquisition_error",
+                        {
+                            "attachment_id": attachment_id,
+                            "connector": connector,
+                            "error": type(error).__name__,
+                        },
+                    )
+            session.datasets.append(dataset_info)
+            access_manifest.append(dataset_info)
+
         for req in plan.data_requirements:
+            if req.source_type == "attached_dataset":
+                attachment_id = str(req.query_params.get("attachment_id") or "")
+                if attachment_id in attached_by_id:
+                    continue
             if req.access_mode in {"access-controlled", "code-only"}:
                 dataset_info = {
                     "source": req.server_name or req.source_type,
@@ -843,7 +976,7 @@ class ResearchExecutor:
         translation_scores = await self._assess_translation_potential(session)
         session.translation_scores = translation_scores
 
-        findings = [
+        findings: list[dict[str, Any]] = [
             {"type": "review", "text": review_resp.text[:500]},
             {"type": "stats_audit", "data": stats_audit},
             {"type": "translation_scores", "data": translation_scores},
@@ -1168,7 +1301,10 @@ class ResearchExecutor:
         session.cost.record_llm_call(resp.input_tokens, resp.output_tokens, resp.cost_usd)
 
         try:
-            audit = json.loads(self._extract_json(resp.text))
+            parsed_audit = json.loads(self._extract_json(resp.text))
+            if not isinstance(parsed_audit, dict):
+                raise ValueError("Statistical audit must be an object")
+            audit: dict[str, Any] = {str(key): value for key, value in parsed_audit.items()}
         except (json.JSONDecodeError, ValueError):
             audit = {
                 "checks": [

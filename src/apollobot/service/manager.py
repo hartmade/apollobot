@@ -7,17 +7,20 @@ import hashlib
 import json
 import mimetypes
 import os
+import shutil
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4, uuid5
+
+import httpx
 
 from apollobot import __version__
 from apollobot.agents import LLMProvider, OpenAIProvider, create_llm
 from apollobot.agents.executor import CheckpointHandler
 from apollobot.agents.orchestrator import Orchestrator
-from apollobot.agents.planner import ResearchPlan, ResearchPlanner
+from apollobot.agents.planner import AnalysisStep, DataRequirement, ResearchPlan, ResearchPlanner
 from apollobot.core import ApolloConfig, load_config
-from apollobot.core.mission import Constraints, Mission
+from apollobot.core.mission import Constraints, Mission, ResearchMode
 from apollobot.core.provenance import ProvenanceEngine
 from apollobot.core.session import Phase
 from apollobot.service.framer import classify_question_safety
@@ -29,8 +32,10 @@ from apollobot.service.model_catalog import (
 from apollobot.service.models import (
     NODE_BLUEPRINT,
     PHASE_TO_NODE,
+    ContextAttachment,
     QuestionCheck,
     ServiceEvent,
+    parse_context_attachments,
     utc_now,
 )
 from apollobot.service.store import ServiceStore
@@ -81,6 +86,7 @@ class InvestigationManager:
         investigation_id: str | None = None,
         model_id: object = None,
         provider_tag: object = None,
+        context_attachments: object = None,
     ) -> dict[str, Any]:
         if check.answerability != "investigable":
             raise ValueError("Question must be investigable before an investigation is created")
@@ -94,6 +100,7 @@ class InvestigationManager:
         else:
             investigation_id = str(uuid4())
         route = resolve_model_route(model_id, provider_tag)
+        context = parse_context_attachments(context_attachments)
         nodes = [node.model_copy(deep=True) for node in NODE_BLUEPRINT]
         payload = {
             "id": investigation_id,
@@ -108,6 +115,7 @@ class InvestigationManager:
             "model_id": route.model_id,
             "model_provider_tag": route.provider_tag,
             "check": check.model_dump(by_alias=True),
+            "context_attachments": [self._new_context_manifest(item) for item in context],
         }
         self.store.create_investigation(payload, nodes)
         hypotheses = " ".join(
@@ -129,6 +137,25 @@ class InvestigationManager:
             node_id="frame_question",
             data=self._model_stamp(route),
         )
+        if context:
+            self._event(
+                investigation_id,
+                "context.registered",
+                "complete",
+                (
+                    f"Registered {len(context)} private context "
+                    f"item{'s' if len(context) != 1 else ''}; no attached code or "
+                    "instructions were executed."
+                ),
+                node_id="frame_question",
+                data={
+                    "items": len(context),
+                    "datasets": sum(item.kind == "dataset" for item in context),
+                    "analysis_allowed": sum(
+                        item.kind == "dataset" and item.analysis_allowed for item in context
+                    ),
+                },
+            )
         return {
             "id": investigation_id,
             "status": "planned",
@@ -423,6 +450,7 @@ class InvestigationManager:
         if not investigation:
             return
         mission = self._mission(investigation_id, investigation)
+        await self._cache_private_dataset_context(mission)
         route = self._model_route(investigation)
         self.store.update_investigation(
             investigation_id,
@@ -606,6 +634,43 @@ class InvestigationManager:
             for hypothesis in hypotheses[:3]
         ]
         title = str(investigation.get("title") or mission.title or mission.objective)
+        attached_datasets = [
+            item
+            for item in mission.metadata.get("context_datasets", [])
+            if isinstance(item, dict)
+        ][:2]
+        data_requirements = [
+            DataRequirement(
+                description=(
+                    "Researcher-provided dataset: "
+                    f"{item.get('label') or item.get('id')}"
+                ),
+                source_type="attached_dataset",
+                query_params={"attachment_id": item.get("id")},
+                priority="required",
+                access_mode=(
+                    "access-controlled" if item.get("source_url") is None else "public"
+                ),
+                license="",
+                redistribution_allowed=False,
+                availability_note=(
+                    "Use only if analysis_allowed remains true and preserve the source checksum "
+                    "and complete transformation lineage."
+                ),
+            )
+            for item in attached_datasets
+        ] or [
+            DataRequirement(
+                description="Public evidence directly relevant to the accepted question",
+                source_type="mcp_server",
+                priority="required",
+                access_mode="public",
+                redistribution_allowed=False,
+                availability_note=(
+                    "Use only sources whose access and provenance can be captured."
+                ),
+            )
+        ]
         return ResearchPlan(
             mission_id=mission.id,
             summary=f"Run a bounded, preregistered computational pilot for {title}.",
@@ -617,36 +682,25 @@ class InvestigationManager:
             ),
             hypotheses=plan_hypotheses,
             literature_queries=[mission.objective[:500]],
-            data_requirements=[
-                {
-                    "description": "Public evidence directly relevant to the accepted question",
-                    "source_type": "mcp_server",
-                    "priority": "required",
-                    "access_mode": "public",
-                    "redistribution_allowed": False,
-                    "availability_note": (
-                        "Use only sources whose access and provenance can be captured."
-                    ),
-                }
-            ],
+            data_requirements=data_requirements,
             analysis_steps=[
-                {
-                    "name": "bounded_evidence_pilot",
-                    "description": (
+                AnalysisStep(
+                    name="bounded_evidence_pilot",
+                    description=(
                         "Construct and execute the smallest comparison that can test the primary "
                         "hypothesis within the accepted budget."
                     ),
-                    "method": "preregistered_computational_comparison",
-                    "inputs": ["Public evidence directly relevant to the accepted question"],
-                    "parameters": {
+                    method="preregistered_computational_comparison",
+                    inputs=["Public evidence directly relevant to the accepted question"],
+                    parameters={
                         "pilot": True,
                         "captured_provenance_required": True,
                         "robustness_check_required": True,
                         "researcher_guidance": guidance,
                     },
-                    "expected_output": "A result table, robustness result, and evidence lineage.",
-                    "statistical_tests": ["predeclared primary comparison", "sensitivity check"],
-                }
+                    expected_output="A result table, robustness result, and evidence lineage.",
+                    statistical_tests=["predeclared primary comparison", "sensitivity check"],
+                )
             ],
             statistical_framework=(
                 "Report effect direction, uncertainty, and sensitivity; do not promote an "
@@ -784,6 +838,10 @@ class InvestigationManager:
                 / f"attempt-{int(run['attempt']):04d}"
             )
             Path(run_config.output_dir).mkdir(parents=True, exist_ok=True)
+            self._stage_private_dataset_context(
+                investigation_id,
+                Path(run_config.output_dir) / investigation_id,
+            )
             route = self._model_route(investigation)
             orchestrator = Orchestrator(
                 config=run_config,
@@ -987,6 +1045,7 @@ class InvestigationManager:
                 # the manifest itself remain available for reproducibility.
                 restricted_paths = set()
                 redistributable_raw_paths = set()
+        lineage_metadata = self._artifact_lineage_metadata(investigation_id, session_dir)
         for path in session_dir.rglob("*"):
             if not path.is_file():
                 continue
@@ -1008,6 +1067,7 @@ class InvestigationManager:
                 "media_type": mimetypes.guess_type(path.name)[0] or "application/octet-stream",
                 "size_bytes": path.stat().st_size,
                 "checksum_sha256": digest,
+                "metadata": lineage_metadata,
             }
             artifacts.append(self.store.add_artifact(investigation_id, artifact))
         self._event(
@@ -1018,6 +1078,71 @@ class InvestigationManager:
             data={"artifact_count": len(artifacts)},
         )
         return artifacts
+
+    def _artifact_lineage_metadata(
+        self, investigation_id: str, session_dir: Path
+    ) -> dict[str, Any]:
+        """Bind generated artifacts to immutable input datasets and transformations."""
+        lineage_path = session_dir / "provenance" / "data_lineage.json"
+        try:
+            raw_lineage = json.loads(lineage_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            return {}
+        if not isinstance(raw_lineage, list):
+            return {}
+        transformation_chain: list[dict[str, Any]] = []
+        for item in raw_lineage[:64]:
+            if not isinstance(item, dict):
+                continue
+            parameters = item.get("parameters")
+            transformation_chain.append({
+                "source": str(item.get("source") or "")[:500],
+                "operation": str(item.get("operation") or "")[:160],
+                "description": str(item.get("description") or "")[:1000],
+                "input_hash": str(item.get("input_hash") or "")[:80],
+                "output_hash": str(item.get("output_hash") or "")[:80],
+                "parameters": parameters if isinstance(parameters, dict) else {},
+                "script_ref": str(item.get("script_ref") or "")[:500],
+            })
+        if not transformation_chain:
+            return {}
+
+        source_ids: list[str] = []
+        for entry in transformation_chain:
+            parameters = entry["parameters"]
+            if not isinstance(parameters, dict):
+                continue
+            attachment_id = parameters.get("attachment_id")
+            if not isinstance(attachment_id, str):
+                continue
+            try:
+                normalized = str(UUID(attachment_id))
+            except ValueError:
+                continue
+            if normalized not in source_ids:
+                source_ids.append(normalized)
+
+        investigation = self.store.get_investigation(investigation_id) or {}
+        mission = investigation.get("mission")
+        mission_metadata = mission.get("metadata") if isinstance(mission, dict) else None
+        context = (
+            mission_metadata.get("context_datasets", [])
+            if isinstance(mission_metadata, dict)
+            else []
+        )
+        profiles = {
+            str(item.get("id")): item.get("dataset_profile")
+            for item in context
+            if isinstance(item, dict) and isinstance(item.get("dataset_profile"), dict)
+        }
+        source_id = source_ids[0] if source_ids else None
+        return {
+            "source_artifact_id": source_id,
+            "source_artifact_ids": source_ids,
+            "dataset_profile": profiles.get(source_id, {}) if source_id else {},
+            "transformation_chain": transformation_chain,
+            "lineage_schema": "frontier-artifact-lineage/v1",
+        }
 
     async def _capture_preregistration(
         self, investigation_id: str, plan: ResearchPlan
@@ -1190,17 +1315,21 @@ class InvestigationManager:
             )
             return mission
         check = QuestionCheck.model_validate(investigation["check"])
+        context = parse_context_attachments(investigation.get("context_attachments"))
+        analysis_allowed = any(
+            item.kind == "dataset" and item.analysis_allowed for item in context
+        )
         return Mission(
             id=investigation_id,
             title=check.title,
             objective=check.question,
             hypotheses=check.hypotheses,
-            mode=check.mode,
+            mode=ResearchMode(check.mode),
             domain=check.apollo_domain,
             constraints=Constraints(
                 compute_budget=max(0.01, check.estimate.compute_usd),
                 time_limit=f"{max(1, check.estimate.duration_minutes)}m",
-                data_sources="public_only",
+                data_sources="public_and_user_supplied" if analysis_allowed else "public_only",
                 ethics="observational_only",
             ),
             metadata={
@@ -1210,8 +1339,100 @@ class InvestigationManager:
                 "model_id": route.model_id,
                 "model_provider_tag": route.provider_tag,
                 "model_catalog_version": MODEL_CATALOG_VERSION,
+                "context_attachments": [item.model_dump(mode="json") for item in context],
             },
         )
+
+    async def _cache_private_dataset_context(self, mission: Mission) -> None:
+        """Capture approved uploaded datasets while their one-time signed URLs are valid."""
+        raw_context = mission.metadata.get("context_attachments", [])
+        context = parse_context_attachments(raw_context)
+        cached: list[dict[str, Any]] = []
+        context_root = (self.output_dir / mission.id / "context").resolve()
+        context_root.mkdir(parents=True, exist_ok=True)
+
+        async with httpx.AsyncClient(timeout=60, follow_redirects=False) as client:
+            for attachment in context:
+                manifest = attachment.planner_manifest()
+                manifest["cache_status"] = "not-required"
+                if (
+                    attachment.kind == "dataset"
+                    and attachment.analysis_allowed
+                    and attachment.local_path
+                    and attachment.cache_status == "verified"
+                ):
+                    existing = (self.output_dir / mission.id / attachment.local_path).resolve()
+                    if context_root in existing.parents and existing.is_file():
+                        payload = existing.read_bytes()
+                        checksum = hashlib.sha256(payload).hexdigest()
+                        if (
+                            len(payload) == attachment.size_bytes
+                            and checksum == attachment.checksum_sha256
+                        ):
+                            manifest["local_path"] = attachment.local_path
+                            manifest["cache_status"] = "verified"
+                            cached.append(manifest)
+                            continue
+                if (
+                    attachment.kind == "dataset"
+                    and attachment.analysis_allowed
+                    and attachment.private_url
+                    and attachment.checksum_sha256
+                    and attachment.size_bytes
+                ):
+                    try:
+                        response = await client.get(attachment.private_url)
+                        response.raise_for_status()
+                        payload = response.content
+                        checksum = hashlib.sha256(payload).hexdigest()
+                        if (
+                            len(payload) != attachment.size_bytes
+                            or checksum != attachment.checksum_sha256
+                        ):
+                            raise ValueError("dataset bytes do not match the signed manifest")
+                        safe_label = "".join(
+                            character if character.isalnum() or character in "._-" else "-"
+                            for character in attachment.label
+                        ).strip("-")[:120] or "dataset.bin"
+                        destination = (context_root / attachment.id / safe_label).resolve()
+                        if context_root not in destination.parents:
+                            raise ValueError("dataset cache path escaped its investigation root")
+                        destination.parent.mkdir(parents=True, exist_ok=True)
+                        destination.write_bytes(payload)
+                        manifest["local_path"] = str(
+                            destination.relative_to(self.output_dir / mission.id)
+                        )
+                        manifest["cache_status"] = "verified"
+                    except (httpx.HTTPError, ValueError, OSError) as error:
+                        manifest["analysis_allowed"] = False
+                        manifest["cache_status"] = "unavailable"
+                        manifest["cache_error"] = type(error).__name__
+                cached.append(manifest)
+
+        mission.metadata["context_attachments"] = cached
+        mission.metadata["context_datasets"] = [
+            item for item in cached if item.get("kind") == "dataset"
+        ]
+
+    @staticmethod
+    def _new_context_manifest(attachment: ContextAttachment) -> dict[str, Any]:
+        """Remove worker-owned cache fields from a new platform manifest."""
+        manifest = attachment.model_dump(mode="json")
+        manifest.pop("local_path", None)
+        manifest.pop("cache_status", None)
+        return manifest
+
+    def _stage_private_dataset_context(
+        self, investigation_id: str, execution_root: Path
+    ) -> None:
+        """Copy verified private inputs into the isolated attempt workspace."""
+        source = (self.output_dir / investigation_id / "context").resolve()
+        destination = (execution_root / "context").resolve()
+        if not source.is_dir():
+            return
+        if execution_root.resolve() not in destination.parents:
+            raise ValueError("Execution context path escaped its attempt root")
+        shutil.copytree(source, destination, dirs_exist_ok=True)
 
     @staticmethod
     def _model_route(investigation: dict[str, Any]) -> ModelRoute:
@@ -1388,6 +1609,8 @@ def summarize_related_literature(corpus: list[dict[str, Any]]) -> list[dict[str,
 
 
 def numeric_score(value: object) -> float | None:
+    if not isinstance(value, int | float | str):
+        return None
     try:
         score = float(value)
     except (TypeError, ValueError):
